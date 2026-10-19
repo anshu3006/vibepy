@@ -14,7 +14,7 @@ GROUND_Y = 540
 FPS = 60
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Elemental Clash - Stamina & Shields")
+pygame.display.set_caption("Elemental Clash - Shield Cooldown Edition")
 clock = pygame.time.Clock()
 
 WHITE = (245, 250, 255)
@@ -27,22 +27,22 @@ ELEMENT_DATA = {
         'name': 'FIRE',
         'main': (235, 55, 25),
         'colors': [(255, 70, 20), (255, 135, 25), (255, 205, 55), (255, 245, 190)],
-        'p1_controls': 'P1: W/S Move | E Shield | Hold F (Beam) | G (Burst)',
-        'p2_controls': 'P2: UP/DN Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
+        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Beam) | G (Burst)',
+        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
     },
     'water': {
         'name': 'WATER',
         'main': (25, 105, 230),
         'colors': [(20, 80, 230), (25, 170, 255), (100, 225, 255), (220, 250, 255)],
-        'p1_controls': 'P1: W/S Move | E Shield | Hold F (Beam) | G (Burst)',
-        'p2_controls': 'P2: UP/DN Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
+        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Beam) | G (Burst)',
+        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
     },
     'earth': {
         'name': 'EARTH',
         'main': (45, 165, 60),
         'colors': [(30, 110, 40), (60, 190, 75), (135, 225, 100), (210, 245, 170)],
-        'p1_controls': 'P1: W/S Move | E Shield | Hold F (Vines) | G (Bullet Seeds)',
-        'p2_controls': 'P2: UP/DN Move | RCTRL Shield | Hold ENTER (Vines) | RSHIFT (Bullet Seeds)',
+        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Vines) | G (Bullet Seeds)',
+        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Vines) | RSHIFT (Bullet Seeds)',
     }
 }
 
@@ -79,6 +79,36 @@ def draw_glow(surface, x, y, radius, color, alpha=100):
         pygame.draw.circle(glow, (*color, min(255, a)), (cx, cy), r)
 
     surface.blit(glow, (int(x - cx), int(y - cy)), special_flags=pygame.BLEND_RGBA_ADD)
+
+
+def draw_honeycomb_shield(surface, x, y, radius):
+    shield_surf = pygame.Surface((radius * 2 + 10, radius * 2 + 10), pygame.SRCALPHA)
+    cx, cy = radius + 5, radius + 5
+
+    pygame.draw.circle(shield_surf, (200, 230, 255, 90), (cx, cy), radius, 3)
+
+    hex_size = 11
+    h_width = math.sqrt(3) * hex_size
+    h_height = 2 * hex_size
+
+    for row in range(-3, 4):
+        for col in range(-3, 4):
+            hx = cx + col * h_width + (row % 2) * (h_width / 2)
+            hy = cy + row * (h_height * 0.75)
+
+            if math.hypot(hx - cx, hy - cy) < radius - 4:
+                is_light = (row + col) % 2 == 0
+                color = (235, 245, 255, 120) if is_light else (110, 150, 195, 85)
+
+                points = []
+                for i in range(6):
+                    angle = math.tau / 6 * i + math.pi / 6
+                    points.append((hx + hex_size * 0.8 * math.cos(angle), hy + hex_size * 0.8 * math.sin(angle)))
+                
+                pygame.draw.polygon(shield_surf, color, points)
+                pygame.draw.polygon(shield_surf, (255, 255, 255, 160), points, 1)
+
+    surface.blit(shield_surf, (int(x - cx), int(y - cy)))
 
 
 def draw_background(surface, t):
@@ -192,7 +222,7 @@ class Projectile:
             pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
             pygame.draw.circle(surface, WHITE, (int(self.x), int(self.y)), max(2, self.radius // 3))
 
-        else:  # Water
+        else:
             points = []
             for i in range(12):
                 fraction = i / 11
@@ -337,7 +367,7 @@ class Beam:
                 py = center_y + wave * beam_width * 0.45
                 pygame.draw.circle(surface, random.choice(self.colors), (int(px), int(py)), random.randint(2, max(3, beam_width // 5)))
 
-        else:  # Water
+        else:
             pygame.draw.line(surface, self.main_color, (start_x, center_y), (end_x, center_y), beam_width)
             for band in range(3):
                 points = []
@@ -370,13 +400,12 @@ class Player:
         self.display_hp = 100
         self.speed = 5
 
-        # Stamina & Shield properties
         self.max_stamina = 100.0
         self.stamina = 100.0
-        # 10 seconds to fill completely at 60 FPS = 600 frames
         self.stamina_regen = 100.0 / 600.0
         
-        self.shield_timer = 0  # 0.5 seconds at 60 FPS = 30 frames
+        self.shield_timer = 0
+        self.shield_cooldown = 0  # 2 seconds cooldown (120 frames)
 
         self.charging = False
         self.charge_time = 0
@@ -385,7 +414,7 @@ class Player:
         self.barrage_queue = 0
         self.barrage_cooldown = 0
 
-        self.animation_time = random.random() * 10
+        self.animation_time = random.random() * math.tau
         self.hit_flash = 0
 
         self.direction = 1 if is_player_one else -1
@@ -399,24 +428,35 @@ class Player:
 
         self.rect = pygame.Rect(int(x - 20), int(y - 45), 40, 75)
 
-    def move(self, up_key, down_key, keys):
+    def move(self, up_key, down_key, left_key, right_key, keys):
         if keys[up_key]:
             self.y -= self.speed
         if keys[down_key]:
             self.y += self.speed
+        if keys[left_key]:
+            self.x -= self.speed
+        if keys[right_key]:
+            self.x += self.speed
 
         self.y = max(125, min(GROUND_Y - 45, self.y))
+
+        if self.is_player_one:
+            self.x = max(60, min(WIDTH // 2 - 60, self.x))
+        else:
+            self.x = max(WIDTH // 2 + 60, min(WIDTH - 60, self.x))
+
         self.rect.centerx = int(self.x)
         self.rect.centery = int(self.y)
 
     def trigger_shield(self):
-        shield_cost = self.max_stamina / 5.0  # 1/5 stamina (20)
-        if self.shield_timer <= 0 and self.stamina >= shield_cost:
+        shield_cost = self.max_stamina / 5.0
+        if self.shield_cooldown <= 0 and self.shield_timer <= 0 and self.stamina >= shield_cost:
             self.stamina -= shield_cost
-            self.shield_timer = 30  # 0.5 seconds
+            self.shield_timer = 30  # Active for 0.5 seconds
+            self.shield_cooldown = 120  # 2 seconds cooldown at 60 FPS
 
     def trigger_barrage(self, projectiles):
-        barrage_cost = 30.0  # Decided based on total damage (~25-30) comparable to charged beam
+        barrage_cost = 30.0
         if self.barrage_cooldown <= 0 and self.barrage_queue == 0 and self.stamina >= barrage_cost:
             self.stamina -= barrage_cost
             self.barrage_queue = 6 if self.element_type == 'earth' else 5
@@ -429,12 +469,13 @@ class Player:
         if abs(self.hp - self.display_hp) < 0.1:
             self.display_hp = self.hp
 
-        # Natural Stamina regeneration
         if not self.charging and self.stamina < self.max_stamina:
             self.stamina = min(self.max_stamina, self.stamina + self.stamina_regen)
 
         if self.shield_timer > 0:
             self.shield_timer -= 1
+        if self.shield_cooldown > 0:
+            self.shield_cooldown -= 1
 
         if self.hit_flash > 0:
             self.hit_flash -= 1
@@ -484,10 +525,9 @@ class Player:
 
     def take_damage(self, damage):
         if self.shield_timer > 0:
-            # Shield blocks the attack completely
             return
         self.hp = max(0, self.hp - damage)
-        self.hit_flash = 8
+        self.hit_flash = 12
 
     def get_hand_position(self):
         shoulder_x = self.x + self.direction * 12
@@ -513,7 +553,6 @@ class Player:
         self.charging = False
         self.charge_time = 0
 
-        # Stamina costs: Basic = 1/6 (16.67), Charged = 1/4 (25)
         cost = 25.0 if charged else (self.max_stamina / 6.0)
 
         if self.stamina >= cost:
@@ -522,6 +561,14 @@ class Player:
             self.attack_flash = 7
 
             if charged:
+                recoil_distance = 22
+                self.x -= self.direction * recoil_distance
+                if self.is_player_one:
+                    self.x = max(60, min(WIDTH // 2 - 60, self.x))
+                else:
+                    self.x = max(WIDTH // 2 + 60, min(WIDTH - 60, self.x))
+                self.rect.centerx = int(self.x)
+
                 return Beam(self)
 
             hand_x, hand_y = self.get_hand_position()
@@ -536,8 +583,11 @@ class Player:
 
         main_color = self.color
         highlight = self.colors[-1]
-        t = self.animation_time
+        
+        if self.hit_flash > 0 and (self.hit_flash // 2) % 2 == 0:
+            main_color = WHITE
 
+        t = self.animation_time
         breathe = math.sin(t * 2) * 2
         shoulder_y = self.y - 14
         head_y = self.y - 43 + breathe * 0.3
@@ -547,10 +597,8 @@ class Player:
         if self.charging:
             draw_glow(surface, self.x, self.y - 10, 38, main_color, 80)
 
-        # Draw Shield barrier if active
         if self.shield_timer > 0:
-            draw_glow(surface, self.x, self.y - 5, 48, WHITE, 160)
-            pygame.draw.circle(surface, WHITE, (int(self.x), int(self.y - 5)), 44, 3)
+            draw_honeycomb_shield(surface, self.x, self.y - 5, 46)
 
         pygame.draw.rect(surface, BLACK, (int(self.x - 10), int(self.y + 17), 8, 28))
         pygame.draw.rect(surface, main_color, (int(self.x - 9), int(self.y + 18), 6, 26))
@@ -578,7 +626,6 @@ def draw_health_and_stamina_bar(surface, x, y, player, label):
     width = 380
     height = 20
 
-    # Health Bar Background
     pygame.draw.rect(surface, (55, 35, 50), (x, y, width, height), border_radius=6)
     health_width = int(width * max(0, player.display_hp) / 100)
 
@@ -589,7 +636,6 @@ def draw_health_and_stamina_bar(surface, x, y, player, label):
     text = FONT.render(f"{label}: {int(player.hp)} HP", True, WHITE)
     surface.blit(text, (x, y - 26))
 
-    # Stamina Bar directly below
     stamina_y = y + height + 6
     stamina_height = 10
     pygame.draw.rect(surface, (40, 45, 65), (x, stamina_y, width, stamina_height), border_radius=4)
@@ -599,12 +645,22 @@ def draw_health_and_stamina_bar(surface, x, y, player, label):
         pygame.draw.rect(surface, (230, 200, 50), (x, stamina_y, stamina_width, stamina_height), border_radius=4)
     pygame.draw.rect(surface, WHITE, (x, stamina_y, width, stamina_height), 1, border_radius=4)
 
+    # Display Shield Cooldown indicator if cooling down
+    if player.shield_cooldown > 0:
+        cd_secs = math.ceil(player.shield_cooldown / 60)
+        cd_text = SMALL_FONT.render(f"Shield CD: {cd_secs}s", True, (200, 150, 150))
+        surface.blit(cd_text, (x + width - cd_text.get_width(), y - 26))
+
 
 class CharacterSelectionScreen:
     def __init__(self):
         self.elements = ['fire', 'water', 'earth']
         self.p1_idx = 0
         self.p2_idx = 1
+
+        self.p1_card_rect = pygame.Rect(100, 160, 360, 320)
+        self.p2_card_rect = pygame.Rect(640, 160, 360, 320)
+        self.start_btn_rect = pygame.Rect(WIDTH // 2 - 180, 520, 360, 50)
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -620,6 +676,16 @@ class CharacterSelectionScreen:
 
             elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
                 return True
+
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            if self.p1_card_rect.collidepoint(mx, my):
+                self.p1_idx = (self.p1_idx + 1) % len(self.elements)
+            elif self.p2_card_rect.collidepoint(mx, my):
+                self.p2_idx = (self.p2_idx + 1) % len(self.elements)
+            elif self.start_btn_rect.collidepoint(mx, my):
+                return True
+
         return False
 
     def draw(self, surface):
@@ -629,15 +695,19 @@ class CharacterSelectionScreen:
 
         pygame.draw.line(surface, (50, 65, 95), (WIDTH // 2, 120), (WIDTH // 2, 500), 3)
 
+        mx, my = pygame.mouse.get_pos()
+
         # P1 Box
         p1_elem = self.elements[self.p1_idx]
         p1_data = ELEMENT_DATA[p1_elem]
-        pygame.draw.rect(surface, p1_data['main'], (100, 160, 360, 320), border_radius=16)
-        pygame.draw.rect(surface, WHITE, (100, 160, 360, 320), 4, border_radius=16)
+        p1_hover = self.p1_card_rect.collidepoint(mx, my)
+        
+        pygame.draw.rect(surface, p1_data['main'], self.p1_card_rect, border_radius=16)
+        pygame.draw.rect(surface, (255, 255, 255) if p1_hover else (180, 200, 230), self.p1_card_rect, 6 if p1_hover else 4, border_radius=16)
 
         p1_title = TITLE_FONT.render("PLAYER 1", True, WHITE)
         p1_elem_txt = LARGE_FONT.render(p1_data['name'], True, WHITE)
-        p1_hint = FONT.render("Press 'A' / 'D' to Choose", True, (200, 220, 255))
+        p1_hint = FONT.render("Click Card or Press 'A'/'D'", True, (220, 235, 255))
 
         surface.blit(p1_title, (280 - p1_title.get_width() // 2, 180))
         surface.blit(p1_elem_txt, (280 - p1_elem_txt.get_width() // 2, 280))
@@ -646,19 +716,28 @@ class CharacterSelectionScreen:
         # P2 Box
         p2_elem = self.elements[self.p2_idx]
         p2_data = ELEMENT_DATA[p2_elem]
-        pygame.draw.rect(surface, p2_data['main'], (640, 160, 360, 320), border_radius=16)
-        pygame.draw.rect(surface, WHITE, (640, 160, 360, 320), 4, border_radius=16)
+        p2_hover = self.p2_card_rect.collidepoint(mx, my)
+
+        pygame.draw.rect(surface, p2_data['main'], self.p2_card_rect, border_radius=16)
+        pygame.draw.rect(surface, (255, 255, 255) if p2_hover else (180, 200, 230), self.p2_card_rect, 6 if p2_hover else 4, border_radius=16)
 
         p2_title = TITLE_FONT.render("PLAYER 2", True, WHITE)
         p2_elem_txt = LARGE_FONT.render(p2_data['name'], True, WHITE)
-        p2_hint = FONT.render("Press 'LEFT' / 'RIGHT' to Choose", True, (200, 220, 255))
+        p2_hint = FONT.render("Click Card or Press 'LEFT'/'RIGHT'", True, (220, 235, 255))
 
         surface.blit(p2_title, (820 - p2_title.get_width() // 2, 180))
         surface.blit(p2_elem_txt, (820 - p2_elem_txt.get_width() // 2, 280))
         surface.blit(p2_hint, (820 - p2_hint.get_width() // 2, 410))
 
-        start_txt = FONT.render("Press SPACE or ENTER to Start Battle!", True, WHITE)
-        surface.blit(start_txt, (WIDTH // 2 - start_txt.get_width() // 2, 540))
+        # Start Button
+        btn_hover = self.start_btn_rect.collidepoint(mx, my)
+        btn_color = (60, 180, 90) if btn_hover else (40, 140, 70)
+        
+        pygame.draw.rect(surface, btn_color, self.start_btn_rect, border_radius=12)
+        pygame.draw.rect(surface, WHITE, self.start_btn_rect, 2, border_radius=12)
+
+        start_txt = FONT.render("CLICK HERE TO START BATTLE", True, WHITE)
+        surface.blit(start_txt, (WIDTH // 2 - start_txt.get_width() // 2, 532))
 
 
 # =====================================================
@@ -711,7 +790,7 @@ while running:
                     particles.clear()
 
                 elif not game_over:
-                    # P1 Inputs
+                    # P1 Controls
                     if event.key == pygame.K_e:
                         player1.trigger_shield()
                     elif event.key == pygame.K_f:
@@ -720,7 +799,7 @@ while running:
                     elif event.key == pygame.K_g:
                         player1.trigger_barrage(projectiles)
 
-                    # P2 Inputs
+                    # P2 Controls
                     elif event.key == pygame.K_RCTRL:
                         player2.trigger_shield()
                     elif event.key == pygame.K_RETURN:
@@ -756,8 +835,8 @@ while running:
     elif state == "BATTLE":
         if not game_over:
             keys = pygame.key.get_pressed()
-            player1.move(pygame.K_w, pygame.K_s, keys)
-            player2.move(pygame.K_UP, pygame.K_DOWN, keys)
+            player1.move(pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d, keys)
+            player2.move(pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT, keys)
 
             background_time += 0.02
 
