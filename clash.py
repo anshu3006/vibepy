@@ -1,202 +1,717 @@
 import math
 import random
 import sys
+import time
+import io
+import wave
+import struct
+import threading
 import pygame
 
 pygame.init()
 
 # =====================================================
-# GAME SETTINGS & CONSTANTS
+# GAME CONFIGURATION & CONSTANTS
 # =====================================================
 
-WIDTH, HEIGHT = 1100, 650
-GROUND_Y = 540
+WIDTH, HEIGHT = 1200, 700
+GROUND_Y = 550
 FPS = 60
 
+# Screen & Surfaces
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Elemental Clash - Shield Cooldown Edition")
+pygame.display.set_caption("ELEMENTAL CLASH: OVERDRIVE - Full Fledged Edition")
 clock = pygame.time.Clock()
 
-# Battle scenes are drawn to this offscreen surface first so a screen shake
-# can nudge the whole picture without touching game logic or UI math.
 game_surface = pygame.Surface((WIDTH, HEIGHT))
+ui_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
+# Palette
 WHITE = (245, 250, 255)
-BLACK = (15, 18, 30)
-BG = (12, 16, 35)
-GROUND = (28, 35, 57)
+BLACK = (12, 14, 24)
+DARK_BG = (10, 13, 26)
+GOLD = (255, 215, 60)
+CRIT_RED = (255, 65, 65)
+
+# Fonts
+try:
+    HUGE_FONT = pygame.font.SysFont("impact", 64)
+    TITLE_FONT = pygame.font.SysFont("impact", 48)
+    HEADER_FONT = pygame.font.SysFont("arial", 28, bold=True)
+    FONT = pygame.font.SysFont("arial", 20, bold=True)
+    SMALL_FONT = pygame.font.SysFont("arial", 14, bold=True)
+    TINY_FONT = pygame.font.SysFont("arial", 11, bold=True)
+except Exception:
+    HUGE_FONT = pygame.font.Font(None, 64)
+    TITLE_FONT = pygame.font.Font(None, 48)
+    HEADER_FONT = pygame.font.Font(None, 28)
+    FONT = pygame.font.Font(None, 20)
+    SMALL_FONT = pygame.font.Font(None, 14)
+    TINY_FONT = pygame.font.Font(None, 11)
+
+# =====================================================
+# ELEMENTAL DATA & MOVE SET DEFINITIONS
+# =====================================================
 
 ELEMENT_DATA = {
     'fire': {
-        'name': 'FIRE',
-        'main': (235, 55, 25),
-        'colors': [(255, 70, 20), (255, 135, 25), (255, 205, 55), (255, 245, 190)],
-        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Beam) | G (Burst)',
-        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
+        'name': 'IGNIS',
+        'title': 'The Flame Colossus',
+        'main': (245, 60, 25),
+        'accent': (255, 145, 30),
+        'highlight': (255, 230, 75),
+        'core': (255, 250, 210),
+        'dark': (70, 16, 10),
+        'colors': [(245, 60, 25), (255, 145, 30), (255, 220, 60), (255, 250, 200)],
+        'stats': {'power': 95, 'speed': 70, 'defense': 65, 'range': 80},
+        'primary_name': 'Solar Comet',
+        'skill_name': 'Inferno Volley',
+        'beam_name': 'Solar Flare Ray',
+        'ult_name': 'SUPERNOVA APOCALYPSE',
+        'desc': 'Devastating offensive firepower with high burst damage and burning trails.'
     },
     'water': {
-        'name': 'WATER',
-        'main': (25, 105, 230),
-        'colors': [(20, 80, 230), (25, 170, 255), (100, 225, 255), (220, 250, 255)],
-        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Beam) | G (Burst)',
-        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Beam) | RSHIFT (Burst)',
+        'name': 'AQUARIS',
+        'title': 'The Ocean Sovereign',
+        'main': (25, 120, 245),
+        'accent': (35, 190, 255),
+        'highlight': (120, 235, 255),
+        'core': (230, 250, 255),
+        'dark': (12, 35, 80),
+        'colors': [(20, 95, 235), (35, 190, 255), (120, 235, 255), (225, 250, 255)],
+        'stats': {'power': 75, 'speed': 85, 'defense': 80, 'range': 85},
+        'primary_name': 'Hydro Lance',
+        'skill_name': 'Torrent Surge',
+        'beam_name': 'Tidal Maelstrom',
+        'ult_name': 'LEVIATHAN DELUGE',
+        'desc': 'Fluid mobility, rapid piercing barrages, and immense tsunami waves.'
     },
     'earth': {
-        'name': 'EARTH',
-        'main': (45, 165, 60),
-        'colors': [(30, 110, 40), (60, 190, 75), (135, 225, 100), (210, 245, 170)],
-        'p1_controls': 'P1: WASD Move | E Shield | Hold F (Vines) | G (Bullet Seeds)',
-        'p2_controls': 'P2: ARROWS Move | RCTRL Shield | Hold ENTER (Vines) | RSHIFT (Bullet Seeds)',
+        'name': 'TERRAN',
+        'title': 'The Stone Vanguard',
+        'main': (45, 175, 65),
+        'accent': (75, 225, 95),
+        'highlight': (165, 245, 130),
+        'core': (230, 255, 205),
+        'dark': (15, 60, 25),
+        'colors': [(35, 140, 50), (65, 210, 85), (150, 240, 120), (220, 255, 190)],
+        'stats': {'power': 85, 'speed': 60, 'defense': 95, 'range': 75},
+        'primary_name': 'Geo Boulder',
+        'skill_name': 'Fissure Spikes',
+        'beam_name': 'Tectonic Cannon',
+        'ult_name': 'CATACLYSMIC QUAKE',
+        'desc': 'Heavy bastion armor, ground-erupting crystals, and crushing monoliths.'
+    },
+    'lightning': {
+        'name': 'VOLT',
+        'title': 'The Storm Striker',
+        'main': (160, 45, 255),
+        'accent': (35, 225, 255),
+        'highlight': (140, 240, 255),
+        'core': (250, 255, 255),
+        'dark': (45, 15, 80),
+        'colors': [(160, 45, 255), (60, 160, 255), (50, 235, 255), (250, 255, 255)],
+        'stats': {'power': 90, 'speed': 95, 'defense': 55, 'range': 85},
+        'primary_name': 'Plasma Bolt',
+        'skill_name': 'Chain Discharge',
+        'beam_name': 'Thunder God Railgun',
+        'ult_name': 'JUDGMENT OF RAIJIN',
+        'desc': 'Blistering speed, instantaneous electric bolts, and cascading thunderbolts.'
+    },
+    'wind': {
+        'name': 'ZEPHYR',
+        'title': 'The Gale Sylph',
+        'main': (20, 195, 170),
+        'accent': (65, 240, 205),
+        'highlight': (180, 255, 240),
+        'core': (245, 255, 252),
+        'dark': (10, 65, 55),
+        'colors': [(20, 180, 155), (65, 235, 200), (170, 250, 235), (240, 255, 250)],
+        'stats': {'power': 70, 'speed': 100, 'defense': 65, 'range': 90},
+        'primary_name': 'Gale Crescent',
+        'skill_name': 'Whirlwind Burst',
+        'beam_name': 'Vortex Hurricane',
+        'ult_name': 'TEMPEST CATACLYSM',
+        'desc': 'Extreme aerial agility, sonic slicing blades, and twin raging tornados.'
     }
 }
 
-TITLE_FONT = pygame.font.SysFont("arial", 42, bold=True)
-FONT = pygame.font.SysFont("arial", 20, bold=True)
-LARGE_FONT = pygame.font.SysFont("arial", 48, bold=True)
-SMALL_FONT = pygame.font.SysFont("arial", 13, bold=True)
+ELEMENT_LIST = ['fire', 'water', 'earth', 'lightning', 'wind']
 
-
-# =====================================================
-# TYPE EFFECTIVENESS
-# =====================================================
+# Type Effectiveness Matchup Multipliers
+TYPE_MATCHUPS = {
+    'fire': {'earth': 1.5, 'wind': 1.5, 'water': 0.75},
+    'water': {'fire': 1.5, 'earth': 1.25, 'lightning': 0.75},
+    'earth': {'water': 1.5, 'lightning': 1.5, 'fire': 0.75, 'wind': 0.75},
+    'lightning': {'water': 1.5, 'wind': 1.5, 'earth': 0.75},
+    'wind': {'earth': 1.5, 'fire': 1.25, 'lightning': 0.75},
+}
 
 def get_type_multiplier(attacker_type, defender_type):
-    if (attacker_type == 'water' and defender_type == 'fire') or \
-       (attacker_type == 'fire' and defender_type == 'earth') or \
-       (attacker_type == 'earth' and defender_type == 'water'):
-        return 1.5
-    return 1.0
+    return TYPE_MATCHUPS.get(attacker_type, {}).get(defender_type, 1.0)
 
 
 # =====================================================
-# VISUAL HELPERS
+# PROCEDURAL AUDIO SYNTHESIZER
 # =====================================================
 
-def draw_glow(surface, x, y, radius, color, alpha=100):
-    radius = max(1, int(radius))
-    glow = pygame.Surface((radius * 6, radius * 6), pygame.SRCALPHA)
-    cx = cy = radius * 3
+class SoundEngine:
+    def __init__(self):
+        self.sounds = {}
+        self.enabled = True
+        self.music_enabled = True
+        self.volume_sfx = 0.7
+        self.volume_music = 0.4
+        self.music_channel = None
+        self.sample_rate = 22050
+        self.ready = False
 
-    for i in range(5, 0, -1):
-        r = max(1, int(radius * i * 0.6))
-        a = max(1, int(alpha / (i * 1.5)))
-        pygame.draw.circle(glow, (*color, min(255, a)), (cx, cy), r)
+        try:
+            pygame.mixer.init(frequency=self.sample_rate, size=-16, channels=2, buffer=512)
+            self.music_channel = pygame.mixer.Channel(7)
+            self.init_sfx()
+            self.ready = True
+        except Exception as e:
+            print("Mixer init failed, running silent:", e)
+            self.enabled = False
 
-    surface.blit(glow, (int(x - cx), int(y - cy)), special_flags=pygame.BLEND_RGBA_ADD)
+    def _pack_sound(self, dur, fn):
+        n = int(self.sample_rate * dur)
+        frames = []
+        for i in range(n):
+            t = i / float(self.sample_rate)
+            val = int(max(-32767, min(32767, fn(t, dur) * 32000)))
+            frames.append(struct.pack('<hh', val, val))
+        buf = io.BytesIO()
+        w = wave.open(buf, 'wb')
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(self.sample_rate)
+        w.writeframes(b''.join(frames))
+        w.close()
+        buf.seek(0)
+        return pygame.mixer.Sound(buf)
 
+    def init_sfx(self):
+        # Primary shoot
+        self.sounds['shoot'] = self._pack_sound(0.12, lambda t, d: math.sin(2 * math.pi * (820 - 450 * (t/d)) * t) * (1 - t/d))
+        # Heavy impact hit
+        self.sounds['hit'] = self._pack_sound(0.20, lambda t, d: (math.sin(2 * math.pi * 95 * t) + ((hash(int(t * 14000)) % 100) / 50.0 - 1.0) * 0.35) * (1 - t/d))
+        # Beam firing hum & roar
+        self.sounds['beam'] = self._pack_sound(0.40, lambda t, d: (math.sin(2 * math.pi * 140 * t) * 0.5 + math.sin(2 * math.pi * 280 * t) * 0.3 + ((hash(int(t * 22000)) % 100) / 50.0 - 1.0) * 0.25) * math.sin(math.pi * t / d))
+        # Charge hum
+        self.sounds['charge'] = self._pack_sound(0.25, lambda t, d: math.sin(2 * math.pi * (200 + 600 * (t/d)**1.5) * t) * 0.4 * (t/d))
+        # Perfect parry - crisp crystal chime
+        self.sounds['parry'] = self._pack_sound(0.45, lambda t, d: (math.sin(2 * math.pi * 1450 * t) * 0.65 + math.sin(2 * math.pi * 2150 * t) * 0.35) * math.exp(-7.5 * t))
+        # Shield barrier activation
+        self.sounds['shield'] = self._pack_sound(0.22, lambda t, d: math.sin(2 * math.pi * (300 + 150 * math.sin(t * 40)) * t) * (1 - t/d) * 0.5)
+        # Dash whoosh
+        self.sounds['dash'] = self._pack_sound(0.15, lambda t, d: ((hash(int(t * 16000)) % 100) / 50.0 - 1.0) * math.sin(math.pi * t / d) * 0.45)
+        # Clash crackle
+        self.sounds['clash'] = self._pack_sound(0.18, lambda t, d: (math.sin(2 * math.pi * 320 * t) * 0.4 + ((hash(int(t * 30000)) % 100) / 50.0 - 1.0) * 0.4) * (1 - t/d))
+        # Ultimate / Overdrive thunder
+        self.sounds['ultimate'] = self._pack_sound(0.65, lambda t, d: (math.sin(2 * math.pi * (80 + 120 * (1 - t/d)) * t) * 0.7 + ((hash(int(t * 18000)) % 100) / 50.0 - 1.0) * 0.4) * (1 - (t/d)**0.6))
+        # UI Clicks
+        self.sounds['select'] = self._pack_sound(0.08, lambda t, d: math.sin(2 * math.pi * 880 * t) * (1 - t/d) * 0.4)
+        self.sounds['move'] = self._pack_sound(0.05, lambda t, d: math.sin(2 * math.pi * 440 * t) * (1 - t/d) * 0.3)
+        self.sounds['ko'] = self._pack_sound(0.8, lambda t, d: (math.sin(2 * math.pi * (160 - 90 * (t/d)) * t) * 0.7 + ((hash(int(t * 12000)) % 100) / 50.0 - 1.0) * 0.3) * (1 - t/d))
 
-def draw_honeycomb_shield(surface, x, y, radius):
-    shield_surf = pygame.Surface((radius * 2 + 10, radius * 2 + 10), pygame.SRCALPHA)
-    cx, cy = radius + 5, radius + 5
+        for snd in self.sounds.values():
+            snd.set_volume(self.volume_sfx)
 
-    pygame.draw.circle(shield_surf, (200, 230, 255, 90), (cx, cy), radius, 3)
+        # Procedural Background Music Loop (125 BPM synth loop)
+        try:
+            self.music_sound = self._generate_music_loop()
+            self.music_sound.set_volume(self.volume_music)
+            if self.music_enabled and self.music_channel:
+                self.music_channel.play(self.music_sound, loops=-1)
+        except Exception as e:
+            print("Music synth skipped:", e)
 
-    hex_size = 11
-    h_width = math.sqrt(3) * hex_size
-    h_height = 2 * hex_size
+    def _generate_music_loop(self):
+        dur = 3.84  # 8 beats at 125 BPM
+        n = int(self.sample_rate * dur)
+        frames = []
+        bpm = 125.0
+        beat_dur = 60.0 / bpm
+        bass_notes = [55.0, 55.0, 65.4, 49.0]  # A, A, C, G
 
-    for row in range(-3, 4):
-        for col in range(-3, 4):
-            hx = cx + col * h_width + (row % 2) * (h_width / 2)
-            hy = cy + row * (h_height * 0.75)
+        for i in range(n):
+            t = i / float(self.sample_rate)
+            beat_time = (t % beat_dur) / beat_dur
+            beat_num = int(t / beat_dur) % 8
 
-            if math.hypot(hx - cx, hy - cy) < radius - 4:
-                is_light = (row + col) % 2 == 0
-                color = (235, 245, 255, 120) if is_light else (110, 150, 195, 85)
+            # Kick drum on beats 0, 2, 4, 6
+            kick = 0.0
+            if beat_num % 2 == 0 and beat_time < 0.2:
+                freq = 140.0 * math.exp(-beat_time * 24.0)
+                kick = math.sin(2 * math.pi * freq * beat_time) * (1.0 - beat_time / 0.2) * 0.55
 
-                points = []
-                for i in range(6):
-                    angle = math.tau / 6 * i + math.pi / 6
-                    points.append((hx + hex_size * 0.8 * math.cos(angle), hy + hex_size * 0.8 * math.sin(angle)))
-                
-                pygame.draw.polygon(shield_surf, color, points)
-                pygame.draw.polygon(shield_surf, (255, 255, 255, 160), points, 1)
+            # Snare on beats 1, 3, 5, 7
+            snare = 0.0
+            if beat_num % 2 == 1 and beat_time < 0.25:
+                noise = ((hash(int(t * 26000)) % 100) / 50.0 - 1.0) * 0.3
+                tone = math.sin(2 * math.pi * 180 * beat_time) * 0.25
+                snare = (noise + tone) * (1.0 - beat_time / 0.25) * 0.45
 
-    surface.blit(shield_surf, (int(x - cx), int(y - cy)))
+            # Hi-hat on 8th notes
+            hat_time = (t % (beat_dur / 2.0)) / (beat_dur / 2.0)
+            hat = 0.0
+            if hat_time < 0.06:
+                hat = ((hash(int(t * 38000)) % 100) / 50.0 - 1.0) * (1.0 - hat_time / 0.06) * 0.18
 
+            # Synth Bassline
+            chord_idx = (beat_num // 2) % len(bass_notes)
+            bfreq = bass_notes[chord_idx]
+            sub_t = t % (beat_dur / 2.0)
+            bass = (math.sin(2 * math.pi * bfreq * t) + 0.35 * math.sin(4 * math.pi * bfreq * t)) * (1.0 - (sub_t / (beat_dur / 2.0)) * 0.4) * 0.28
 
-def draw_background(surface, t):
-    surface.fill(BG)
+            # Arpeggiated melody
+            arp_notes = [220.0, 261.6, 329.6, 392.0, 440.0, 523.2, 659.2, 784.0]
+            arp_step = int((t * 4.0) % len(arp_notes))
+            afreq = arp_notes[arp_step]
+            arp_t = (t % 0.25) / 0.25
+            arp = math.sin(2 * math.pi * afreq * t) * (1.0 - arp_t) * 0.16
 
-    for i in range(12):
-        x = i * (WIDTH // 11)
-        y = 100 + math.sin(t + i * 0.8) * 25
-        pygame.draw.circle(surface, (20, 30, 65), (int(x), int(y)), 55)
+            mix = kick + snare + hat + bass + arp
+            val = int(max(-32767, min(32767, mix * 26000)))
+            frames.append(struct.pack('<hh', val, val))
 
-    pygame.draw.rect(surface, GROUND, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
-    pygame.draw.line(surface, (90, 115, 160), (0, GROUND_Y), (WIDTH, GROUND_Y), 3)
+        buf = io.BytesIO()
+        w = wave.open(buf, 'wb')
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(self.sample_rate)
+        w.writeframes(b''.join(frames))
+        w.close()
+        buf.seek(0)
+        return pygame.mixer.Sound(buf)
 
-    for x in range(0, WIDTH, 55):
-        pygame.draw.line(surface, (38, 48, 72), (x, GROUND_Y + 3), (x - 35, HEIGHT), 1)
+    def play(self, name):
+        if self.enabled and name in self.sounds:
+            self.sounds[name].play()
+
+    def toggle_music(self):
+        self.music_enabled = not self.music_enabled
+        if self.music_channel:
+            if self.music_enabled:
+                if hasattr(self, 'music_sound'):
+                    self.music_channel.play(self.music_sound, loops=-1)
+            else:
+                self.music_channel.stop()
+        return self.music_enabled
+
+    def toggle_sfx(self):
+        self.enabled = not self.enabled
+        return self.enabled
+
+AUDIO = SoundEngine()
 
 
 # =====================================================
-# PARTICLE CLASS
+# FAST GLOW & PRE-RENDER CACHE PIPELINE
+# =====================================================
+
+GLOW_CACHE = {}
+
+def get_glow_texture(radius, color):
+    key = (int(radius), color[0], color[1], color[2])
+    if key in GLOW_CACHE:
+        return GLOW_CACHE[key]
+
+    r = max(4, int(radius))
+    surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+    cx, cy = r, r
+
+    for step in range(r, 0, -2):
+        frac = step / r
+        alpha = int(120 * (1.0 - frac) * (1.0 - frac))
+        if alpha > 0:
+            pygame.draw.circle(surf, (*color, min(255, alpha)), (cx, cy), step)
+
+    GLOW_CACHE[key] = surf
+    return surf
+
+def draw_glow(surface, x, y, radius, color, alpha_mult=1.0):
+    if radius <= 1:
+        return
+    texture = get_glow_texture(radius, color)
+    if alpha_mult < 0.99:
+        temp = texture.copy()
+        temp.set_alpha(int(255 * alpha_mult))
+        surface.blit(temp, (int(x - radius), int(y - radius)), special_flags=pygame.BLEND_RGBA_ADD)
+    else:
+        surface.blit(texture, (int(x - radius), int(y - radius)), special_flags=pygame.BLEND_RGBA_ADD)
+
+
+# =====================================================
+# JUICE ENGINE: CAMERA SHAKE, HITSTOP & COMBAT TEXT
+# =====================================================
+
+shake_timer = 0
+shake_intensity = 0.0
+hitstop_timer = 0
+
+def trigger_shake(intensity, duration):
+    global shake_intensity, shake_timer
+    shake_intensity = max(shake_intensity, intensity)
+    shake_timer = max(shake_timer, duration)
+
+def trigger_hitstop(frames):
+    global hitstop_timer
+    hitstop_timer = max(hitstop_timer, frames)
+
+def get_shake_offset():
+    if shake_timer <= 0:
+        return 0, 0
+    decay = shake_timer / 12.0
+    p = shake_intensity * decay
+    return int(random.uniform(-p, p)), int(random.uniform(-p, p))
+
+
+class FloatingText:
+    def __init__(self, x, y, text, color=WHITE, font=FONT, vy=-3.5, lifetime=45):
+        self.x = float(x)
+        self.y = float(y)
+        self.text = text
+        self.color = color
+        self.font = font
+        self.vy = vy
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+
+    def update(self):
+        self.y += self.vy
+        self.vy *= 0.92
+        self.lifetime -= 1
+
+    def draw(self, surface):
+        alpha = max(0, min(255, int(255 * (self.lifetime / self.max_lifetime))))
+        txt_surf = self.font.render(self.text, True, self.color)
+        txt_surf.set_alpha(alpha)
+        # Shadow
+        shadow = self.font.render(self.text, True, BLACK)
+        shadow.set_alpha(int(alpha * 0.7))
+        surface.blit(shadow, (int(self.x - txt_surf.get_width() // 2 + 2), int(self.y + 2)))
+        surface.blit(txt_surf, (int(self.x - txt_surf.get_width() // 2), int(self.y)))
+
+    def is_dead(self):
+        return self.lifetime <= 0
+
+
+class ShockwaveRing:
+    def __init__(self, x, y, color, max_radius=80, duration=22, width=4):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.max_radius = max_radius
+        self.duration = duration
+        self.timer = duration
+        self.max_width = width
+
+    def update(self):
+        self.timer -= 1
+
+    def draw(self, surface):
+        if self.timer <= 0:
+            return
+        progress = 1.0 - (self.timer / self.duration)
+        r = int(self.max_radius * progress)
+        if r < 2:
+            return
+        alpha = int(255 * (1.0 - progress))
+        w = max(1, int(self.max_width * (1.0 - progress * 0.6)))
+
+        ring_surf = pygame.Surface((r * 2 + 10, r * 2 + 10), pygame.SRCALPHA)
+        pygame.draw.circle(ring_surf, (*self.color, min(255, alpha)), (r + 5, r + 5), r, w)
+        surface.blit(ring_surf, (int(self.x - r - 5), int(self.y - r - 5)), special_flags=pygame.BLEND_RGBA_ADD)
+
+    def is_dead(self):
+        return self.timer <= 0
+
+
+class GroundDecal:
+    def __init__(self, x, y, width, color=(40, 20, 25), lifetime=180):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.color = color
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+
+    def update(self):
+        self.lifetime -= 1
+
+    def draw(self, surface):
+        progress = self.lifetime / self.max_lifetime
+        alpha = int(180 * progress)
+        decal_surf = pygame.Surface((self.width * 2, 20), pygame.SRCALPHA)
+        pygame.draw.ellipse(decal_surf, (*self.color, alpha), (0, 0, self.width * 2, 16))
+        surface.blit(decal_surf, (int(self.x - self.width), int(self.y - 8)))
+
+    def is_dead(self):
+        return self.lifetime <= 0
+
+
+# =====================================================
+# PARTICLES & GHOST AFTER-IMAGES
 # =====================================================
 
 class Particle:
-    def __init__(self, x, y, color, size, lifetime, vx=0, vy=0):
+    def __init__(self, x, y, color, size, lifetime, vx=0.0, vy=0.0, gravity=0.0, shape='circle'):
         self.x = float(x)
         self.y = float(y)
         self.color = color
-        self.size = size
+        self.size = float(size)
+        self.orig_size = float(size)
         self.lifetime = lifetime
         self.max_lifetime = lifetime
         self.vx = vx
         self.vy = vy
+        self.gravity = gravity
+        self.shape = shape
+        self.angle = random.uniform(0, 360)
+        self.rot_speed = random.uniform(-8, 8)
 
     def update(self):
         self.x += self.vx
         self.y += self.vy
-        self.vx *= 0.985
-        self.vy *= 0.985
+        self.vy += self.gravity
+        self.vx *= 0.96
+        self.vy *= 0.96
+        self.angle += self.rot_speed
         self.lifetime -= 1
-        self.size *= 0.97
+        self.size = max(0.5, self.orig_size * (self.lifetime / self.max_lifetime))
 
     def draw(self, surface):
-        if self.lifetime <= 0:
+        if self.lifetime <= 0 or self.size < 0.5:
             return
-        radius = max(1, int(self.size))
-        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), radius)
+        r = max(1, int(self.size))
+        if self.shape == 'circle':
+            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), r)
+        elif self.shape == 'spark':
+            ex = self.x - self.vx * 2.5
+            ey = self.y - self.vy * 2.5
+            pygame.draw.line(surface, self.color, (int(self.x), int(self.y)), (int(ex), int(ey)), max(1, r // 2))
 
     def is_dead(self):
         return self.lifetime <= 0 or self.size < 0.5
 
 
+class GhostTrail:
+    """Fading after-image silhouette rendered during high-speed dashes."""
+    def __init__(self, champion, color, lifetime=14):
+        self.x = champion.x
+        self.y = champion.y
+        self.color = color
+        self.direction = champion.direction
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+
+    def update(self):
+        self.lifetime -= 1
+
+    def draw(self, surface):
+        alpha = int(160 * (self.lifetime / self.max_lifetime))
+        if alpha <= 0:
+            return
+        surf = pygame.Surface((50, 90), pygame.SRCALPHA)
+        cx, cy = 25, 45
+        pygame.draw.circle(surf, (*self.color, alpha), (cx, cy - 20), 16)
+        pygame.draw.rect(surf, (*self.color, alpha), (cx - 14, cy - 8, 28, 42), border_radius=8)
+        surface.blit(surf, (int(self.x - cx), int(self.y - cy)), special_flags=pygame.BLEND_RGBA_ADD)
+
+    def is_dead(self):
+        return self.lifetime <= 0
+
+
 # =====================================================
-# PROJECTILE CLASS
+# ARENA STAGES (MULTI-LAYER DYNAMIC BACKGROUNDS)
+# =====================================================
+
+class ArenaStage:
+    def __init__(self, stage_id):
+        self.stage_id = stage_id
+        self.time = 0.0
+        self.lightning_flash = 0
+        self.ambient_particles = []
+        self.init_stage_data()
+
+    def init_stage_data(self):
+        if self.stage_id == 'fire':
+            self.name = "CALDERA OF IGNIS"
+            self.bg_color = (20, 10, 16)
+            self.ground_color = (38, 20, 24)
+            self.accent = (245, 70, 25)
+        elif self.stage_id == 'water':
+            self.name = "ABYSSAL SANCTUARY"
+            self.bg_color = (8, 20, 42)
+            self.ground_color = (18, 38, 64)
+            self.accent = (30, 160, 245)
+        elif self.stage_id == 'lightning':
+            self.name = "TEMPEST PEAKS"
+            self.bg_color = (16, 12, 36)
+            self.ground_color = (28, 24, 48)
+            self.accent = (150, 60, 255)
+        else: # astral
+            self.name = "ASTRAL VOID NEXUS"
+            self.bg_color = (10, 10, 22)
+            self.ground_color = (25, 25, 45)
+            self.accent = (65, 230, 210)
+
+        # Prepopulate ambient particles
+        for _ in range(35):
+            self.spawn_ambient(random.uniform(0, WIDTH), random.uniform(50, GROUND_Y))
+
+    def spawn_ambient(self, x=None, y=None):
+        px = random.uniform(0, WIDTH) if x is None else x
+        py = random.uniform(GROUND_Y - 20, GROUND_Y + 10) if y is None else y
+
+        if self.stage_id == 'fire':
+            p = Particle(px, py, random.choice([(255, 90, 20), (255, 170, 30), (255, 220, 60)]),
+                         random.uniform(2, 4), random.randint(45, 90),
+                         vx=random.uniform(-0.6, 0.6), vy=random.uniform(-1.5, -0.6), shape='spark')
+        elif self.stage_id == 'water':
+            p = Particle(px, py, (120, 220, 255), random.uniform(2, 5), random.randint(50, 100),
+                         vx=random.uniform(-0.4, 0.4), vy=random.uniform(-1.0, -0.4))
+        elif self.stage_id == 'lightning':
+            p = Particle(px, py if y is not None else 0, (180, 210, 255), random.uniform(1.5, 3), random.randint(25, 45),
+                         vx=random.uniform(-2.5, -1.5), vy=random.uniform(9.0, 14.0), shape='spark')
+        else:
+            p = Particle(px, py, random.choice([(180, 140, 255), (100, 240, 255), (255, 255, 255)]),
+                         random.uniform(1.5, 3.5), random.randint(60, 120),
+                         vx=random.uniform(-0.3, 0.3), vy=random.uniform(-0.3, 0.3))
+        self.ambient_particles.append(p)
+
+    def update(self):
+        self.time += 0.02
+        if self.lightning_flash > 0:
+            self.lightning_flash -= 1
+
+        if self.stage_id == 'lightning' and random.random() < 0.008:
+            self.lightning_flash = 8
+            trigger_shake(5, 6)
+
+        if len(self.ambient_particles) < 40:
+            self.spawn_ambient()
+
+        for p in self.ambient_particles[:]:
+            p.update()
+            if p.is_dead() or p.y < 30 or p.y > HEIGHT:
+                self.ambient_particles.remove(p)
+
+    def draw(self, surface):
+        surface.fill(self.bg_color)
+
+        # Lightning Flash effect
+        if self.lightning_flash > 0:
+            flash_surf = pygame.Surface((WIDTH, HEIGHT))
+            flash_surf.fill((210, 225, 255))
+            flash_surf.set_alpha(int(90 * (self.lightning_flash / 8.0)))
+            surface.blit(flash_surf, (0, 0))
+
+        # Dynamic Stage Art
+        t = self.time
+        if self.stage_id == 'fire':
+            # Jagged volcanic mountains in background
+            pts = [(0, GROUND_Y), (0, 320), (220, 240), (450, 360), (700, 210), (950, 330), (WIDTH, 260), (WIDTH, GROUND_Y)]
+            pygame.draw.polygon(surface, (30, 16, 22), pts)
+            # Lava river flowing at ground
+            for x in range(0, WIDTH, 30):
+                wave_y = GROUND_Y - 4 + math.sin(t * 3 + x * 0.05) * 5
+                pygame.draw.circle(surface, (255, 110, 25), (x, int(wave_y)), 12)
+            draw_glow(surface, WIDTH // 2, GROUND_Y, 280, (255, 80, 20), 0.35)
+
+        elif self.stage_id == 'water':
+            # Underwater caustics / light shafts
+            for i in range(7):
+                shaft_x = 120 + i * 160 + math.sin(t + i) * 40
+                pts = [(shaft_x - 35, 0), (shaft_x + 35, 0), (shaft_x + 95, GROUND_Y), (shaft_x - 15, GROUND_Y)]
+                shaft_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                pygame.draw.polygon(shaft_surf, (80, 200, 255, 22), pts)
+                surface.blit(shaft_surf, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            # Coral spires
+            for cx in [160, 420, 850, 1050]:
+                pygame.draw.rect(surface, (14, 30, 52), (cx - 24, 280, 48, GROUND_Y - 280), border_radius=12)
+
+        elif self.stage_id == 'lightning':
+            # Storm clouds
+            for i in range(8):
+                cx = i * 180 - 40
+                cy = 70 + math.sin(t * 2 + i) * 15
+                pygame.draw.circle(surface, (30, 24, 55), (int(cx), int(cy)), 110)
+            # Distant spire towers
+            for tx in [250, 600, 950]:
+                pygame.draw.rect(surface, (22, 18, 42), (tx - 18, 200, 36, GROUND_Y - 200))
+                pygame.draw.polygon(surface, (35, 30, 60), [(tx - 28, 200), (tx + 28, 200), (tx, 140)])
+
+        else: # Astral
+            # Nebula glowing dust
+            draw_glow(surface, 350, 240, 220, (140, 50, 240), 0.3)
+            draw_glow(surface, 850, 280, 240, (30, 190, 230), 0.3)
+            # Ancient celestial clockwork rings
+            ring_cx, ring_cy = WIDTH // 2, 280
+            for r, spd in [(140, 0.4), (200, -0.25), (280, 0.15)]:
+                ring_surf = pygame.Surface((r * 2 + 10, r * 2 + 10), pygame.SRCALPHA)
+                pygame.draw.circle(ring_surf, (160, 220, 255, 35), (r + 5, r + 5), r, 2)
+                # Ticks on ring
+                for k in range(12):
+                    ang = t * spd + k * (math.tau / 12)
+                    tx1 = r + 5 + math.cos(ang) * (r - 6)
+                    ty1 = r + 5 + math.sin(ang) * (r - 6)
+                    tx2 = r + 5 + math.cos(ang) * (r + 4)
+                    ty2 = r + 5 + math.sin(ang) * (r + 4)
+                    pygame.draw.line(ring_surf, (200, 240, 255, 60), (tx1, ty1), (tx2, ty2), 2)
+                surface.blit(ring_surf, (ring_cx - r - 5, ring_cy - r - 5))
+
+        # Ambient Weather Particles
+        for p in self.ambient_particles:
+            p.draw(surface)
+
+        # Foreground Arena Ground
+        pygame.draw.rect(surface, self.ground_color, (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))
+        pygame.draw.line(surface, self.accent, (0, GROUND_Y), (WIDTH, GROUND_Y), 4)
+
+        # Ground geometric runic line accents
+        for x in range(0, WIDTH, 60):
+            pygame.draw.line(surface, (self.ground_color[0] + 15, self.ground_color[1] + 15, self.ground_color[2] + 20),
+                             (x, GROUND_Y + 4), (x - 40, HEIGHT), 2)
+
+
+# =====================================================
+# PROJECTILE CLASS (TAILORED ELEMENTAL SPELLS)
 # =====================================================
 
 class Projectile:
-    def __init__(self, x, y, direction, element_type, owner, charged=False, vy=0, radius=10, damage=10):
+    def __init__(self, x, y, direction, element_type, owner, vy=0.0, radius=9, damage=12, speed=13.0, is_parried=False):
         self.x = float(x)
         self.y = float(y)
         self.direction = direction
         self.element_type = element_type
         self.owner = owner
-        self.charged = charged
-
-        self.speed = 11 if element_type == 'earth' else (10 if not charged else 14)
-        self.radius = radius if not charged else 16
-        self.damage = damage if not charged else 20
         self.vy = vy
-        self.timer = 100
+        self.radius = radius
+        self.damage = damage
+        self.speed = speed
+        self.is_parried = is_parried
+
+        self.timer = 110
         self.trail = []
-        self.trail_length = 8 if charged else 5
+        self.trail_max = 8
+        self.anim_t = random.uniform(0, math.tau)
 
-        self.color = ELEMENT_DATA[element_type]['main']
-        self.colors = ELEMENT_DATA[element_type]['colors']
+        elem = ELEMENT_DATA[element_type]
+        self.main_color = elem['main']
+        self.accent_color = elem['accent']
+        self.highlight = elem['highlight']
+        self.colors = elem['colors']
 
-        self.rect = pygame.Rect(
-            int(self.x - self.radius),
-            int(self.y - self.radius),
-            self.radius * 2,
-            self.radius * 2,
-        )
+        self.rect = pygame.Rect(int(self.x - radius), int(self.y - radius), radius * 2, radius * 2)
 
     def update(self, particles):
+        self.anim_t += 0.25
         self.trail.append((self.x, self.y))
-        if len(self.trail) > self.trail_length:
+        if len(self.trail) > self.trail_max:
             self.trail.pop(0)
 
         self.x += self.direction * self.speed
@@ -204,75 +719,76 @@ class Projectile:
         self.timer -= 1
         self.rect.center = (int(self.x), int(self.y))
 
-        if random.random() < 0.8:
-            particles.append(
-                Particle(
-                    self.x - self.direction * self.radius * 0.5,
-                    self.y + random.uniform(-4, 4),
-                    random.choice(self.colors),
-                    random.randint(2, 5),
-                    14,
-                    -self.direction * random.uniform(0.5, 2),
-                    random.uniform(-1, 1),
-                )
-            )
+        # Trail particle discharge
+        if random.random() < 0.85:
+            vx = -self.direction * random.uniform(0.5, 2.5)
+            vy = random.uniform(-1.0, 1.0)
+            col = GOLD if self.is_parried else random.choice(self.colors)
+            particles.append(Particle(self.x, self.y, col, random.uniform(2, 5), 14, vx, vy, shape='spark'))
 
     def draw(self, surface):
-        trail_count = len(self.trail)
+        # Motion trail ribbon
         for i, (tx, ty) in enumerate(self.trail):
-            fade = (i + 1) / (trail_count + 1)
-            trail_radius = max(1, int(self.radius * fade * 0.8))
-            trail_surf = pygame.Surface((trail_radius * 2, trail_radius * 2), pygame.SRCALPHA)
-            alpha = int(140 * fade)
-            pygame.draw.circle(trail_surf, (*self.color, alpha), (trail_radius, trail_radius), trail_radius)
-            surface.blit(trail_surf, (int(tx - trail_radius), int(ty - trail_radius)), special_flags=pygame.BLEND_RGBA_ADD)
+            frac = (i + 1) / float(len(self.trail) + 1)
+            tr = max(1, int(self.radius * frac * 0.75))
+            alpha = int(140 * frac)
+            col = GOLD if self.is_parried else self.accent_color
+            tsurf = pygame.Surface((tr * 2, tr * 2), pygame.SRCALPHA)
+            pygame.draw.circle(tsurf, (*col, alpha), (tr, tr), tr)
+            surface.blit(tsurf, (int(tx - tr), int(ty - tr)), special_flags=pygame.BLEND_RGBA_ADD)
 
-        draw_glow(surface, self.x, self.y, self.radius * 2, self.color, 100)
+        # Glow
+        draw_glow(surface, self.x, self.y, self.radius * 2.8, GOLD if self.is_parried else self.main_color, 0.8)
 
-        if self.element_type == 'earth':
-            cx, cy = int(self.x), int(self.y)
-            pygame.draw.ellipse(
-                surface, self.colors[0],
-                (cx - self.radius, cy - self.radius // 2, self.radius * 2, self.radius)
-            )
-            pygame.draw.circle(surface, self.color, (cx, cy), max(2, self.radius - 2))
-            pygame.draw.circle(surface, WHITE, (cx + self.direction * 2, cy - 1), max(1, self.radius // 3))
-
-        elif self.element_type == 'fire':
-            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
-            pygame.draw.circle(surface, WHITE, (int(self.x), int(self.y)), max(2, self.radius // 3))
-
-        else:
-            points = []
-            for i in range(12):
-                fraction = i / 11
-                px = self.x - self.direction * (fraction * self.radius * 2.2)
-                wave = math.sin(self.timer * 0.6 + fraction * math.pi * 3)
-                py = self.y + wave * (self.radius * 0.75)
-                points.append((int(px), int(py)))
-
-            if len(points) >= 2:
-                pygame.draw.lines(
-                    surface,
-                    self.colors[1] if len(self.colors) > 1 else self.color,
-                    False, points, max(2, self.radius // 2)
-                )
-
-            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
-            pygame.draw.circle(surface, WHITE, (int(self.x), int(self.y)), max(2, self.radius // 3))
+        cx, cy = int(self.x), int(self.y)
+        # Element specific projectile graphics
+        if self.element_type == 'fire':
+            pygame.draw.circle(surface, self.main_color, (cx, cy), self.radius)
+            pygame.draw.circle(surface, self.highlight, (cx + self.direction * 2, cy), max(2, self.radius // 2))
+            pygame.draw.circle(surface, WHITE, (cx + self.direction * 4, cy), max(1, self.radius // 3))
+        elif self.element_type == 'water':
+            # Water tear-drop lance
+            pts = [(cx + self.direction * self.radius * 1.5, cy),
+                   (cx - self.direction * self.radius, cy - self.radius * 0.8),
+                   (cx - self.direction * self.radius * 0.4, cy),
+                   (cx - self.direction * self.radius, cy + self.radius * 0.8)]
+            pygame.draw.polygon(surface, self.accent_color, pts)
+            pygame.draw.polygon(surface, WHITE, pts, 1)
+        elif self.element_type == 'earth':
+            # Jagged faceted rotating rock
+            pts = []
+            for k in range(6):
+                ang = self.anim_t + k * (math.tau / 6)
+                rad = self.radius * (0.8 + 0.3 * math.sin(k * 2.1))
+                pts.append((cx + math.cos(ang) * rad, cy + math.sin(ang) * rad))
+            pygame.draw.polygon(surface, self.main_color, pts)
+            pygame.draw.polygon(surface, self.highlight, pts, 2)
+        elif self.element_type == 'lightning':
+            # Real-time procedural electric spark fork
+            pts = [(cx - self.direction * self.radius * 1.5, cy)]
+            for s in range(4):
+                px = cx - self.direction * self.radius * (1.0 - s * 0.6)
+                py = cy + random.uniform(-self.radius * 0.8, self.radius * 0.8)
+                pts.append((px, py))
+            pts.append((cx + self.direction * self.radius * 1.5, cy))
+            pygame.draw.lines(surface, self.highlight, False, pts, 3)
+            pygame.draw.circle(surface, WHITE, (cx, cy), max(2, self.radius // 2))
+        else: # wind
+            # Crescent sonic blade
+            blade_surf = pygame.Surface((self.radius * 3, self.radius * 3), pygame.SRCALPHA)
+            bx, by = self.radius * 1.5, self.radius * 1.5
+            pygame.draw.arc(blade_surf, (*self.highlight, 240), (bx - self.radius, by - self.radius, self.radius * 2, self.radius * 2),
+                            -math.pi / 2, math.pi / 2, max(2, self.radius // 2))
+            if self.direction < 0:
+                blade_surf = pygame.transform.flip(blade_surf, True, False)
+            surface.blit(blade_surf, (cx - bx, cy - by), special_flags=pygame.BLEND_RGBA_ADD)
 
     def is_finished(self):
-        return (
-            self.timer <= 0
-            or self.x < -100
-            or self.x > WIDTH + 100
-            or self.y < 0
-            or self.y > HEIGHT
-        )
+        return (self.timer <= 0 or self.x < -100 or self.x > WIDTH + 100 or self.y < -50 or self.y > HEIGHT + 50)
 
 
 # =====================================================
-# BEAM CLASS
+# CHARGED BEAM CLASS (HEAVY ELEMENTAL CANNON)
 # =====================================================
 
 class Beam:
@@ -281,48 +797,39 @@ class Beam:
         self.owner = player
         self.element_type = player.element_type
         self.direction = player.direction
-
         self.x, self.y = player.get_hand_position()
 
-        self.length = 750
-        self.max_width = 36
-        self.min_width = 8
-
-        self.timer = 24
+        self.length = 820
+        self.max_width = 46
+        self.min_width = 12
+        self.timer = 32
         self.max_timer = self.timer
-
-        self.damage = 30
+        self.damage = 16
         self.hit_targets = set()
 
-        self.clash_limit = None  # x-coordinate this beam is pushed back to while clashing
+        self.clash_limit = None
         self.clashing = False
+        self.anim_time = 0.0
 
-        self.animation_time = random.random() * math.tau
-        self.particle_timer = 0
+        elem = ELEMENT_DATA[self.element_type]
+        self.main_color = elem['main']
+        self.accent_color = elem['accent']
+        self.highlight = elem['highlight']
+        self.colors = elem['colors']
 
-        self.colors = ELEMENT_DATA[self.element_type]['colors']
-        self.main_color = ELEMENT_DATA[self.element_type]['main']
-        self.highlight = self.colors[-1]
-
-        self.rect = pygame.Rect(
-            int(self.x),
-            int(self.y - self.max_width // 2),
-            self.length,
-            self.max_width,
-        )
-
+        self.rect = pygame.Rect(int(self.x), int(self.y - self.max_width // 2), self.length, self.max_width)
         if self.direction < 0:
             self.rect.left = int(self.x - self.length)
 
     def update(self, particles):
         if self.timer <= 0:
             return
-
-        self.animation_time += 0.25
-        self.particle_timer += 1
+        self.anim_time += 0.35
         self.timer -= 1
+        self.x, self.y = self.player.get_hand_position()
 
-        self.rect.width = self.length
+        live_len = self.get_live_length()
+        self.rect.width = int(live_len)
         self.rect.height = self.max_width
         self.rect.centery = int(self.y)
 
@@ -331,1005 +838,1686 @@ class Beam:
         else:
             self.rect.right = int(self.x)
 
-        if self.particle_timer % 2 == 0:
-            for _ in range(3):
-                distance = random.uniform(0, self.get_live_length())
-                px = self.x + self.direction * distance
-                py = self.y + random.uniform(-self.max_width * 0.5, self.max_width * 0.5)
-
-                vx = random.uniform(-1, 1)
-                vy = random.uniform(-1.5, 1.5)
-                size = random.randint(2, 6)
-
-                particles.append(
-                    Particle(px, py, random.choice(self.colors), size, 14, vx, vy)
-                )
+        # Energy spray particles along the beam
+        for _ in range(3):
+            dist = random.uniform(20, live_len)
+            px = self.x + self.direction * dist
+            py = self.y + random.uniform(-self.max_width * 0.45, self.max_width * 0.45)
+            particles.append(Particle(px, py, random.choice(self.colors), random.uniform(2, 5), 14,
+                                      vx=self.direction * random.uniform(2, 6), vy=random.uniform(-1.5, 1.5), shape='spark'))
 
     def get_live_length(self):
-        """Full travel length, or the shortened reach while locked in a clash."""
         if self.clash_limit is None:
             return self.length
-        return max(0.0, abs(self.clash_limit - self.x))
+        return max(10.0, abs(self.clash_limit - self.x))
 
     def get_live_rect(self):
-        """Collision/visual rect clipped to the current clash point, if any."""
-        live_length = self.get_live_length()
-        rect = pygame.Rect(0, int(self.y - self.max_width // 2), int(live_length), self.max_width)
+        live_len = self.get_live_length()
+        r = pygame.Rect(0, int(self.y - self.max_width // 2), int(live_len), self.max_width)
         if self.direction >= 0:
-            rect.left = int(self.x)
+            r.left = int(self.x)
         else:
-            rect.right = int(self.x)
-        return rect
+            r.right = int(self.x)
+        return r
+
+    def draw(self, surface):
+        if self.timer <= 0:
+            return
+        progress = self.timer / float(self.max_timer)
+        fade = min(1.0, (1.0 - progress) * 4.5 + 0.2)
+        cur_width = max(self.min_width, int(self.max_width * fade))
+
+        start_x = self.x
+        end_x = start_x + self.direction * self.get_live_length()
+        cy = int(self.y)
+        beam_span = abs(end_x - start_x)
+
+        if beam_span < 4:
+            return
+
+        # Radial Bloom Glow
+        draw_glow(surface, (start_x + end_x) / 2.0, cy, cur_width * 2.2, self.main_color, 0.7 * fade)
+
+        # Muzzle Flare Rings
+        time_alive = self.max_timer - self.timer
+        if time_alive < 12:
+            flare_size = cur_width * (2.2 - time_alive * 0.1)
+            pygame.draw.circle(surface, self.highlight, (int(start_x), cy), max(2, int(flare_size)), 3)
+            pygame.draw.circle(surface, WHITE, (int(start_x), cy), max(1, int(flare_size * 0.5)))
+
+        # Helical Spiral Energy Rings around beam core
+        num_rings = max(2, int(beam_span / 26))
+        for i in range(num_rings):
+            t = i / float(num_rings)
+            rx = start_x + self.direction * t * beam_span
+            phase = (self.anim_time * 4 - i * 0.8) % math.tau
+            ring_h = int(cur_width * (0.6 + 0.4 * math.sin(phase)))
+            ring_w = max(3, int(cur_width * 0.28))
+            pygame.draw.ellipse(surface, self.colors[i % len(self.colors)],
+                                (int(rx - ring_w // 2), int(cy - ring_h // 2), ring_w, ring_h))
+
+        # Main Laser Core
+        pygame.draw.line(surface, self.main_color, (start_x, cy), (end_x, cy), max(3, cur_width // 2))
+        pygame.draw.line(surface, self.highlight, (start_x, cy), (end_x, cy), max(2, cur_width // 4))
+        pygame.draw.line(surface, WHITE, (start_x, cy), (end_x, cy), max(1, cur_width // 7))
 
     def is_finished(self):
         return self.timer <= 0
 
-    def draw(self, surface):
-        if self.timer <= 0:
-            return
-
-        progress = max(0.0, min(1.0, self.timer / self.max_timer))
-        fade = min(1.0, (1.0 - progress) * 5 + 0.25)
-        pulse = 1.0 + math.sin(self.animation_time * 2) * 0.08
-        beam_width = max(self.min_width, int(self.max_width * fade * pulse))
-
-        start_x = self.x
-        end_x = start_x + self.direction * self.get_live_length()
-        center_y = int(self.y)
-        beam_span = abs(end_x - start_x)
-
-        draw_glow(surface, (start_x + end_x) / 2, center_y, beam_width + 14, self.main_color, int(110 * fade))
-
-        # --- Release flare: a wide double-wave burst right at the muzzle,
-        # matching the "wings" frame of a freshly unleashed charged attack.
-        time_alive = self.max_timer - self.timer
-        if time_alive < 10 and beam_span > 4:
-            flare_fade = 1.0 - time_alive / 10.0
-            flare_size = beam_width * (1.6 + flare_fade * 1.3)
-            for side in (-1, 1):
-                tip_x = start_x + side * flare_size
-                mid_x = start_x + side * flare_size * 0.5
-                pts = [
-                    (start_x, center_y - beam_width * 0.2),
-                    (tip_x, center_y - flare_size * 0.7),
-                    (mid_x, center_y),
-                    (tip_x, center_y + flare_size * 0.7),
-                    (start_x, center_y + beam_width * 0.2),
-                ]
-                pygame.draw.polygon(surface, self.colors[min(1, len(self.colors) - 1)], pts)
-                pygame.draw.polygon(surface, self.highlight, pts, 2)
-
-        # --- Tunnel body: concentric ring segments marching down the beam,
-        # giving the drill/auger look of the charged-attack reference art.
-        if beam_span > 2:
-            ring_spacing = max(9, beam_width * 0.5)
-            n_rings = max(1, int(beam_span / ring_spacing))
-            for i in range(n_rings + 1):
-                t = i / max(1, n_rings)
-                rx = start_x + self.direction * t * beam_span
-                ring_phase = (self.animation_time * 3 - i * 0.9) % math.tau
-                squeeze = 0.55 + 0.3 * math.sin(ring_phase)
-                ring_h = max(3, int(beam_width * (0.5 + squeeze * 0.5)))
-                ring_w = max(2, int(beam_width * 0.22))
-                color = self.colors[i % len(self.colors)]
-                pygame.draw.ellipse(
-                    surface, color,
-                    (int(rx - ring_w / 2), int(center_y - ring_h / 2), ring_w, ring_h)
-                )
-
-            pygame.draw.line(surface, self.main_color, (start_x, center_y), (end_x, center_y), max(2, beam_width // 2))
-
-        pygame.draw.line(surface, WHITE, (start_x, center_y), (end_x, center_y), max(1, beam_width // 5))
-
-        # --- Tapering spiral tail as the beam dissipates, echoing the thin
-        # corkscrew closing frame of the reference animation.
-        if progress < 0.3 and beam_span > 4:
-            tail_fade = 1 - progress / 0.3
-            tail_len = min(beam_span, beam_width * 2.4 * tail_fade)
-            pts = []
-            for i in range(16):
-                frac = i / 15
-                px = end_x - self.direction * frac * tail_len
-                spiral_r = (1 - frac) * beam_width * 0.45
-                py = center_y + math.sin(self.animation_time * 4 + frac * 10) * spiral_r
-                pts.append((int(px), int(py)))
-            if len(pts) >= 2:
-                pygame.draw.lines(surface, self.highlight, False, pts, max(1, int(beam_width * 0.18)))
-
 
 # =====================================================
-# CLASH EFFECT: the radiant burst/vortex two opposing
-# attacks make when they collide mid-air.
+# OVERDRIVE ULTIMATE ATTACK CLASS
 # =====================================================
 
-class ClashEffect:
-    def __init__(self, x, y, colors, big=False):
-        self.x = x
-        self.y = y
-        self.colors = colors if colors else [WHITE]
-        self.max_timer = 16 if big else 11
-        self.timer = self.max_timer
-        self.start_radius = 6 if big else 3
-        self.grow = 2.6 if big else 1.8
-        self.spin = random.uniform(0, math.tau)
+class UltimateSpell:
+    def __init__(self, owner, opponent):
+        self.owner = owner
+        self.opponent = opponent
+        self.element_type = owner.element_type
+        self.elem_data = ELEMENT_DATA[self.element_type]
+        self.timer = 130
+        self.max_timer = 130
+        self.damage = 26
+        self.hit_applied = False
+        self.sub_projectiles = []
 
-    def update(self):
+        # Trigger cinema slowdown & sound
+        AUDIO.play('ultimate')
+        trigger_shake(16, 24)
+        trigger_hitstop(18)
+
+    def update(self, particles, shockwaves, decals):
         self.timer -= 1
+        t_prog = 1.0 - (self.timer / float(self.max_timer))
 
-    def is_dead(self):
+        # Cinema Impact Frame at 40% progress
+        if not self.hit_applied and self.timer <= 80:
+            self.hit_applied = True
+            mult = get_type_multiplier(self.element_type, self.opponent.element_type)
+            final_dmg = int(self.damage * mult)
+            self.opponent.take_damage(final_dmg, self.owner.direction)
+            shockwaves.append(ShockwaveRing(self.opponent.x, self.opponent.y, self.elem_data['highlight'], 220, 35, 8))
+            decals.append(GroundDecal(self.opponent.x, GROUND_Y, 90, self.elem_data['main'], 240))
+            trigger_shake(20, 20)
+            AUDIO.play('ko')
+
+        # Element-specific ultimate particle manifestations
+        if self.element_type == 'fire':
+            # Falling meteorites
+            for _ in range(4):
+                mx = random.uniform(50, WIDTH - 50)
+                particles.append(Particle(mx, 0, random.choice(self.elem_data['colors']), random.uniform(4, 9), 30,
+                                          vx=random.uniform(-1, 1), vy=random.uniform(14, 22), shape='spark'))
+        elif self.element_type == 'water':
+            # Surging tidal geysers
+            for _ in range(5):
+                gx = random.uniform(60, WIDTH - 60)
+                particles.append(Particle(gx, GROUND_Y, random.choice(self.elem_data['colors']), random.uniform(5, 10), 35,
+                                          vx=random.uniform(-2, 2), vy=random.uniform(-18, -10)))
+        elif self.element_type == 'earth':
+            # Seismic rock eruptions
+            for _ in range(4):
+                ex = random.uniform(100, WIDTH - 100)
+                particles.append(Particle(ex, GROUND_Y, random.choice(self.elem_data['colors']), random.uniform(6, 12), 40,
+                                          vx=random.uniform(-4, 4), vy=random.uniform(-16, -8), gravity=0.5))
+        elif self.element_type == 'lightning':
+            # Cascading thunderbolts
+            if random.random() < 0.4:
+                lx = random.uniform(100, WIDTH - 100)
+                shockwaves.append(ShockwaveRing(lx, GROUND_Y - 20, (180, 240, 255), 140, 18, 5))
+                trigger_shake(8, 6)
+        else: # wind
+            # Colossal twisters
+            for _ in range(6):
+                wx = random.uniform(100, WIDTH - 100)
+                particles.append(Particle(wx, random.uniform(100, GROUND_Y), random.choice(self.elem_data['colors']),
+                                          random.uniform(4, 8), 30, vx=random.uniform(-8, 8), vy=random.uniform(-5, 5)))
+
+    def draw(self, surface):
+        if self.timer > 85:
+            # Banner intro
+            banner_surf = pygame.Surface((WIDTH, 110), pygame.SRCALPHA)
+            banner_surf.fill((*self.elem_data['dark'], 210))
+            surface.blit(banner_surf, (0, 180))
+
+            title = HUGE_FONT.render(f"OVERDRIVE: {self.elem_data['ult_name']}", True, self.elem_data['highlight'])
+            sub = FONT.render(f"Unleashed by {self.elem_data['name']} - {self.elem_data['title']}", True, WHITE)
+            surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 195))
+            surface.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 255))
+
+    def is_finished(self):
         return self.timer <= 0
 
-    def draw(self, surface):
-        if self.timer <= 0:
+
+# =====================================================
+# BEAM-VS-BEAM CLASH SYSTEM & STRUGGLE ENGINE
+# =====================================================
+
+class BeamClashManager:
+    def __init__(self):
+        self.active = False
+        self.beam_a = None
+        self.beam_b = None
+        self.contact_x = WIDTH // 2
+        self.clash_y = GROUND_Y - 100
+        self.struggle_balance = 0.0  # -1.0 (P1 winning) to +1.0 (P2 winning)
+        self.duration = 0
+
+    def start_clash(self, b_a, b_b):
+        self.active = True
+        self.beam_a = b_a
+        self.beam_b = b_b
+        self.contact_x = (b_a.x + b_b.x) / 2.0
+        self.clash_y = (b_a.y + b_b.y) / 2.0
+        self.struggle_balance = 0.0
+        self.duration = 90
+        AUDIO.play('clash')
+
+    def push(self, delta):
+        self.struggle_balance = max(-1.0, min(1.0, self.struggle_balance + delta))
+
+    def update(self, particles, shockwaves, floating_texts):
+        if not self.active:
             return
-        progress = 1.0 - (self.timer / self.max_timer)
-        alpha = max(0, int(255 * (1.0 - progress)))
-        radius = self.start_radius + progress * self.grow * self.max_timer
-        core_r = max(2, int(radius * 0.4))
-        ring_r = max(3, int(radius))
 
-        size = ring_r * 4
-        fx = pygame.Surface((size, size), pygame.SRCALPHA)
-        c = size // 2
+        self.duration -= 1
+        if self.beam_a.is_finished() or self.beam_b.is_finished() or self.duration <= 0 or abs(self.struggle_balance) >= 0.95:
+            # Resolve clash finale!
+            self.resolve_breakthrough(particles, shockwaves, floating_texts)
+            return
 
-        pygame.draw.circle(fx, (255, 255, 255, min(255, alpha)), (c, c), core_r)
+        # Update contact point based on balance
+        span = abs(self.beam_b.x - self.beam_a.x)
+        self.contact_x = self.beam_a.x + self.beam_a.direction * (span * 0.5 + self.struggle_balance * (span * 0.4))
+        self.clash_y = (self.beam_a.y + self.beam_b.y) / 2.0
 
-        spokes = 8
-        for i in range(spokes):
-            angle = self.spin + progress * math.pi + i * (math.tau / spokes)
-            ex = c + math.cos(angle) * ring_r
-            ey = c + math.sin(angle) * ring_r
-            col = self.colors[i % len(self.colors)]
-            pygame.draw.line(fx, (*col, min(255, alpha)), (c, c), (ex, ey), max(1, int(3 * (1 - progress) + 1)))
+        self.beam_a.clash_limit = self.contact_x
+        self.beam_b.clash_limit = self.contact_x
+        self.beam_a.clashing = True
+        self.beam_b.clashing = True
 
-        pygame.draw.circle(fx, (*self.colors[0], min(200, alpha)), (c, c), ring_r, 3)
-        surface.blit(fx, (int(self.x - c), int(self.y - c)), special_flags=pygame.BLEND_RGBA_ADD)
+        trigger_shake(5, 4)
+        if random.random() < 0.6:
+            AUDIO.play('clash')
+            for _ in range(5):
+                col = random.choice(self.beam_a.colors + self.beam_b.colors)
+                particles.append(Particle(self.contact_x, self.clash_y, col, random.uniform(3, 7), 16,
+                                          vx=random.uniform(-6, 6), vy=random.uniform(-6, 6), shape='spark'))
 
+    def resolve_breakthrough(self, particles, shockwaves, floating_texts):
+        self.active = False
+        winner = self.beam_a if self.struggle_balance > 0 else self.beam_b
+        loser = self.beam_b if self.struggle_balance > 0 else self.beam_a
 
-# =====================================================
-# IMPACT JUICE: SCREEN SHAKE & HIT-STOP
-# =====================================================
+        shockwaves.append(ShockwaveRing(self.contact_x, self.clash_y, winner.highlight, 180, 25, 7))
+        floating_texts.append(FloatingText(self.contact_x, self.clash_y - 40, "⚡ CLASH BREAKTHROUGH! ⚡", GOLD, HEADER_FONT))
+        trigger_shake(15, 16)
+        trigger_hitstop(10)
+        AUDIO.play('hit')
 
-shake_timer = 0.0
-shake_intensity = 0.0
-hitstop_timer = 0
+        loser.timer = 0  # Destroy loser beam
+        winner.clash_limit = None  # Winner beam surges across screen
+        winner.damage = int(winner.damage * 1.25)
 
+    def draw(self, surface):
+        if not self.active:
+            return
 
-def trigger_shake(intensity, duration):
-    global shake_timer, shake_intensity
-    shake_intensity = max(shake_intensity, intensity)
-    shake_timer = max(shake_timer, duration)
+        # Central Starburst
+        cx, cy = int(self.contact_x), int(self.clash_y)
+        draw_glow(surface, cx, cy, 75, WHITE, 0.9)
+        draw_glow(surface, cx, cy, 120, self.beam_a.main_color, 0.6)
 
+        # Clash Struggle UI Bar
+        bar_w = 320
+        bar_h = 24
+        bx = WIDTH // 2 - bar_w // 2
+        by = 130
 
-def trigger_hitstop(frames):
-    global hitstop_timer
-    hitstop_timer = max(hitstop_timer, frames)
+        pygame.draw.rect(surface, (20, 24, 38), (bx - 4, by - 4, bar_w + 8, bar_h + 8), border_radius=8)
+        pygame.draw.rect(surface, (70, 85, 120), (bx - 2, by - 2, bar_w + 4, bar_h + 4), 2, border_radius=8)
 
+        # Center split indicator
+        center_x = bx + bar_w // 2
+        split_x = int(center_x + self.struggle_balance * (bar_w // 2 - 10))
 
-def get_shake_offset():
-    if shake_timer <= 0:
-        return 0, 0
-    power = shake_intensity * (shake_timer / 10.0)
-    return int(random.uniform(-power, power)), int(random.uniform(-power, power))
+        # P1 side
+        pygame.draw.rect(surface, self.beam_a.main_color, (bx, by, split_x - bx, bar_h), border_radius=6)
+        # P2 side
+        pygame.draw.rect(surface, self.beam_b.main_color, (split_x, by, bx + bar_w - split_x, bar_h), border_radius=6)
 
+        # Center clash pin
+        pygame.draw.circle(surface, WHITE, (split_x, by + bar_h // 2), 10)
+        pygame.draw.circle(surface, GOLD, (split_x, by + bar_h // 2), 6)
 
-# =====================================================
-# CLASH RESOLUTION: opposing attacks fight instead of
-# flying past each other. Covers basic shots, barrage
-# pellets, and the beam-vs-beam struggle.
-# =====================================================
-
-def spawn_clash_burst(particles, clash_effects, x, y, colors, big=False):
-    clash_effects.append(ClashEffect(x, y, colors, big=big))
-    for _ in range(14 if big else 8):
-        particles.append(
-            Particle(
-                x, y, random.choice(colors), random.randint(3, 7 if big else 5), 14,
-                random.uniform(-4, 4), random.uniform(-4, 4),
-            )
-        )
-
-
-def resolve_clashes(projectiles, beams, particles, clash_effects):
-    for beam in beams:
-        beam.clash_limit = None
-        beam.clashing = False
-
-    # --- Basic attacks & barrage pellets: opposing bolts cancel each other out ---
-    destroyed_ids = set()
-    for i, p_a in enumerate(projectiles):
-        if id(p_a) in destroyed_ids:
-            continue
-        for p_b in projectiles[i + 1:]:
-            if id(p_b) in destroyed_ids or p_a.owner is p_b.owner:
-                continue
-            if p_a.rect.colliderect(p_b.rect):
-                cx = (p_a.x + p_b.x) / 2
-                cy = (p_a.y + p_b.y) / 2
-                spawn_clash_burst(particles, clash_effects, cx, cy, p_a.colors + p_b.colors)
-                trigger_shake(5, 6)
-                destroyed_ids.add(id(p_a))
-                destroyed_ids.add(id(p_b))
-                break
-    if destroyed_ids:
-        projectiles[:] = [p for p in projectiles if id(p) not in destroyed_ids]
-
-    # --- A charged beam shreds through any incoming bolt it meets ---
-    destroyed_ids = set()
-    for proj in projectiles:
-        if id(proj) in destroyed_ids:
-            continue
-        for beam in beams:
-            if beam.owner is proj.owner:
-                continue
-            if proj.rect.colliderect(beam.get_live_rect()):
-                spawn_clash_burst(particles, clash_effects, proj.x, proj.y, proj.colors + beam.colors)
-                destroyed_ids.add(id(proj))
-                break
-    if destroyed_ids:
-        projectiles[:] = [p for p in projectiles if id(p) not in destroyed_ids]
-
-    # --- Beam vs beam: a pushing struggle, contact point biased by the
-    # elemental type matchup, like two charged attacks locking together. ---
-    for i, b_a in enumerate(beams):
-        for b_b in beams[i + 1:]:
-            if b_a.owner is b_b.owner:
-                continue
-            if not b_a.rect.colliderect(b_b.rect):
-                continue
-            overlap = b_a.rect.clip(b_b.rect)
-            if overlap.width <= 0:
-                continue
-
-            power_a = b_a.damage * get_type_multiplier(b_a.element_type, b_b.element_type)
-            power_b = b_b.damage * get_type_multiplier(b_b.element_type, b_a.element_type)
-            total = power_a + power_b
-            bias = ((power_a - power_b) / total) if total else 0.0
-            bias += random.uniform(-0.08, 0.08)
-            bias = max(-0.9, min(0.9, bias))
-
-            contact_x = overlap.centerx + bias * (overlap.width / 2)
-            b_a.clash_limit = contact_x
-            b_b.clash_limit = contact_x
-            b_a.clashing = True
-            b_b.clashing = True
-
-            if random.random() < 0.5:
-                spawn_clash_burst(particles, clash_effects, contact_x, (b_a.y + b_b.y) / 2, b_a.colors + b_b.colors, big=True)
-            trigger_shake(3, 4)
+        hint = SMALL_FONT.render("⚡ BEAM STRUGGLE! MASH ATTACK! ⚡", True, GOLD)
+        surface.blit(hint, (WIDTH // 2 - hint.get_width() // 2, by - 22))
 
 
 # =====================================================
-# PLAYER CLASS
+# CHAMPION / PLAYER CLASS (HIGH GRAPHICS PROCEDURAL AVATAR)
 # =====================================================
 
-class Player:
-    def __init__(self, x, y, element_type, is_player_one):
+class Champion:
+    def __init__(self, x, y, element_type, is_player_one, is_cpu=False, cpu_difficulty='normal'):
         self.x = float(x)
         self.y = float(y)
         self.element_type = element_type
         self.is_player_one = is_player_one
+        self.is_cpu = is_cpu
+        self.cpu_difficulty = cpu_difficulty
 
-        self.hp = 100
-        self.display_hp = 100
-        self.speed = 5
+        elem = ELEMENT_DATA[element_type]
+        self.name = elem['name']
+        self.color = elem['main']
+        self.accent = elem['accent']
+        self.highlight = elem['highlight']
+        self.dark = elem['dark']
+        self.colors = elem['colors']
 
+        # Health & Stats
+        self.max_hp = 160
+        self.hp = 160
+        self.display_hp = 160.0
+        self.damage_lag_hp = 160.0
+
+        # Stamina & Burst (Super Gauge)
         self.max_stamina = 100.0
         self.stamina = 100.0
-        self.stamina_regen = 100.0 / 600.0
-        
-        self.shield_timer = 0
-        self.shield_cooldown = 0  # 2 seconds cooldown (120 frames)
+        self.stamina_regen = 0.32
+        self.burst = 0.0  # 0 to 100%
 
+        # Kinematics & Physics
+        self.vx = 0.0
+        self.vy = 0.0
+        self.speed = 6.0
+        self.is_grounded = True
+        self.direction = 1 if is_player_one else -1
+
+        # Dash Mechanics
+        self.dash_timer = 0
+        self.dash_cooldown = 0
+        self.is_invulnerable = False
+
+        # Shield & Parry
+        self.shield_timer = 0
+        self.shield_cooldown = 0
+        self.parry_window = 0  # 6-frame window for Perfect Parry
+
+        # Attacks & Charging
         self.charging = False
         self.charge_time = 0
-        self.charge_threshold = 45
-
+        self.charge_threshold = 42
+        self.attack_timer = 0
+        self.attack_flash = 0
         self.barrage_queue = 0
         self.barrage_cooldown = 0
 
-        self.animation_time = random.random() * math.tau
+        # Cape & Visual Nodes
+        self.cape_nodes = [[self.x, self.y] for _ in range(5)]
+        self.anim_t = random.uniform(0, math.tau)
         self.hit_flash = 0
-
-        self.direction = 1 if is_player_one else -1
-
-        self.attack_timer = 0
-        self.attack_duration = 18
-        self.attack_flash = 0
-        self.min_attack_cost = self.max_stamina / 6.0
-
-        self.knockback_vx = 0.0
         self.squash_amount = 0.0
         self.walk_phase = 0.0
         self.bob_amp = 0.0
         self.lean = 0.0
-        self.is_moving = False
 
-        self.color = ELEMENT_DATA[element_type]['main']
-        self.colors = ELEMENT_DATA[element_type]['colors']
+        # Combat statistics
+        self.hits_landed = 0
+        self.combo_count = 0
+        self.combo_timer = 0
+        self.parries_landed = 0
+        self.total_damage_dealt = 0
 
-        self.rect = pygame.Rect(int(x - 20), int(y - 45), 40, 75)
+        # CPU AI state
+        self.ai_timer = random.randint(10, 30)
+        self.ai_action = 'idle'
 
-    def move(self, up_key, down_key, left_key, right_key, keys):
-        dx = 0
-        dy = 0
-        if keys[up_key]:
-            dy -= 1
-        if keys[down_key]:
-            dy += 1
-        if keys[left_key]:
-            dx -= 1
-        if keys[right_key]:
-            dx += 1
+        self.rect = pygame.Rect(int(x - 22), int(y - 50), 44, 85)
 
-        self.x += dx * self.speed
-        self.y += dy * self.speed
+    def jump(self):
+        if self.is_grounded and self.stamina >= 10.0:
+            self.vy = -14.5
+            self.is_grounded = False
+            self.squash_amount = 0.35
+            self.stamina -= 8.0
+            AUDIO.play('move')
 
-        # Knockback impulse from being hit, decaying each frame
-        self.x += self.knockback_vx
-        self.knockback_vx *= 0.82
-        if abs(self.knockback_vx) < 0.1:
-            self.knockback_vx = 0.0
+    def dash(self, ghosts):
+        if self.dash_cooldown <= 0 and self.stamina >= 18.0:
+            self.stamina -= 18.0
+            self.dash_timer = 9
+            self.dash_cooldown = 45
+            self.is_invulnerable = True
+            self.vx = self.direction * 19.0
+            self.squash_amount = 0.45
+            AUDIO.play('dash')
+            ghosts.append(GhostTrail(self, self.color))
 
-        self.y = max(125, min(GROUND_Y - 45, self.y))
+    def trigger_shield(self):
+        shield_cost = 18.0
+        if self.shield_cooldown <= 0 and self.shield_timer <= 0 and self.stamina >= shield_cost:
+            self.stamina -= shield_cost
+            self.shield_timer = 32
+            self.shield_cooldown = 110
+            self.parry_window = 7  # 7-frame Perfect Parry window!
+            self.squash_amount = -0.3
+            AUDIO.play('shield')
 
-        if self.is_player_one:
-            self.x = max(60, min(WIDTH // 2 - 60, self.x))
+    def trigger_barrage(self):
+        cost = 28.0
+        if self.barrage_cooldown <= 0 and self.barrage_queue == 0 and self.stamina >= cost:
+            self.stamina -= cost
+            self.barrage_queue = 5
+            self.barrage_cooldown = 130
+            AUDIO.play('shoot')
+
+    def update_physics(self, ghosts, particles):
+        self.anim_t += 0.12
+
+        # Horizontal kinematics
+        self.x += self.vx
+        self.vx *= 0.88
+        if abs(self.vx) < 0.1:
+            self.vx = 0.0
+
+        # Dash decay & ghost spawning
+        if self.dash_timer > 0:
+            self.dash_timer -= 1
+            if self.dash_timer % 3 == 0:
+                ghosts.append(GhostTrail(self, self.highlight))
+            if self.dash_timer <= 0:
+                self.is_invulnerable = False
+
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
+
+        # Vertical gravity & Jump
+        self.y += self.vy
+        self.vy += 0.72  # Gravity
+
+        if self.y >= GROUND_Y - 45:
+            if not self.is_grounded:
+                self.squash_amount = -0.35  # Landing squash
+                for _ in range(4):
+                    particles.append(Particle(self.x, GROUND_Y, (90, 110, 140), random.uniform(2, 4), 12,
+                                              vx=random.uniform(-2, 2), vy=random.uniform(-1, 0)))
+            self.y = GROUND_Y - 45
+            self.vy = 0.0
+            self.is_grounded = True
         else:
-            self.x = max(WIDTH // 2 + 60, min(WIDTH - 60, self.x))
+            self.is_grounded = False
 
+        # Arena boundaries
+        half_boundary = WIDTH // 2 - 40 if not self.is_cpu and False else WIDTH - 60
+        self.x = max(60, min(WIDTH - 60, self.x))
         self.rect.centerx = int(self.x)
         self.rect.centery = int(self.y)
 
-        # Walk bob + lean-into-movement feel
-        self.is_moving = dx != 0 or dy != 0
-        if self.is_moving:
-            self.walk_phase += 0.4
-        target_bob_amp = 1.0 if self.is_moving else 0.0
-        self.bob_amp += (target_bob_amp - self.bob_amp) * 0.25
+        # Smooth HP animations
+        self.display_hp += (self.hp - self.display_hp) * 0.15
+        self.damage_lag_hp += (self.hp - self.damage_lag_hp) * 0.035
 
-        target_lean = dx
-        self.lean += (target_lean - self.lean) * 0.2
-
-    def trigger_shield(self):
-        shield_cost = self.max_stamina / 5.0
-        if self.shield_cooldown <= 0 and self.shield_timer <= 0 and self.stamina >= shield_cost:
-            self.stamina -= shield_cost
-            self.shield_timer = 30  # Active for 0.5 seconds
-            self.shield_cooldown = 120  # 2 seconds cooldown at 60 FPS
-            self.squash_amount = -0.25
-
-    def trigger_barrage(self, projectiles):
-        barrage_cost = 30.0
-        if self.barrage_cooldown <= 0 and self.barrage_queue == 0 and self.stamina >= barrage_cost:
-            self.stamina -= barrage_cost
-            self.barrage_queue = 6 if self.element_type == 'earth' else 5
-            self.barrage_cooldown = 120
-
-    def update(self, particles, projectiles):
-        self.animation_time += 0.12
-
-        self.display_hp += (self.hp - self.display_hp) * 0.12
-        if abs(self.hp - self.display_hp) < 0.1:
-            self.display_hp = self.hp
-
-        self.squash_amount *= 0.78
-        if abs(self.squash_amount) < 0.01:
-            self.squash_amount = 0.0
-
-        if not self.charging and self.stamina < self.max_stamina:
+        # Stamina regeneration
+        if not self.charging and self.shield_timer <= 0:
             self.stamina = min(self.max_stamina, self.stamina + self.stamina_regen)
 
+        # Cooldown ticks
         if self.shield_timer > 0:
             self.shield_timer -= 1
+        if self.parry_window > 0:
+            self.parry_window -= 1
         if self.shield_cooldown > 0:
             self.shield_cooldown -= 1
-
         if self.hit_flash > 0:
             self.hit_flash -= 1
         if self.attack_timer > 0:
             self.attack_timer -= 1
-        if self.attack_flash > 0:
-            self.attack_flash -= 1
         if self.barrage_cooldown > 0:
             self.barrage_cooldown -= 1
 
+        # Combo reset timer
+        if self.combo_timer > 0:
+            self.combo_timer -= 1
+            if self.combo_timer <= 0:
+                self.combo_count = 0
+
+        # Squash & Stretch relaxation
+        self.squash_amount *= 0.82
+
+        # Dynamic Cape Physics simulation
+        anchor_x = self.x - self.direction * 12
+        anchor_y = self.y - 20
+        self.cape_nodes[0] = [anchor_x, anchor_y]
+        for i in range(1, len(self.cape_nodes)):
+            target_x = self.cape_nodes[i - 1][0] - self.direction * 10 - self.vx * 1.5
+            target_y = self.cape_nodes[i - 1][1] + 12 + math.sin(self.anim_t * 2.5 + i) * 3
+            self.cape_nodes[i][0] += (target_x - self.cape_nodes[i][0]) * 0.45
+            self.cape_nodes[i][1] += (target_y - self.cape_nodes[i][1]) * 0.45
+
+    def update_attack_state(self, projectiles, particles):
+        # Barrage burst firing
         if self.barrage_queue > 0:
             if self.attack_timer <= 0:
                 self.attack_timer = 5
-                self.attack_flash = 4
                 self.barrage_queue -= 1
+                hx, hy = self.get_hand_position()
+                spread_vy = random.uniform(-2.5, 2.5)
+                projectiles.append(Projectile(hx, hy, self.direction, self.element_type, self,
+                                              vy=spread_vy, radius=7, damage=3, speed=14.0))
+                AUDIO.play('shoot')
 
-                hand_x, hand_y = self.get_hand_position()
-                spread_vy = random.uniform(-2.2, 2.2)
-
-                projectiles.append(
-                    Projectile(
-                        hand_x, hand_y, self.direction, self.element_type, self,
-                        charged=False, vy=spread_vy,
-                        radius=6 if self.element_type == 'earth' else 7,
-                        damage=4 if self.element_type == 'earth' else 5,
-                    )
-                )
-
-        if not self.charging:
-            return
-
-        self.charge_time += 1
-        progress = min(1.0, self.charge_time / self.charge_threshold)
-        hand_x, hand_y = self.get_hand_position()
-
-        for _ in range(2):
-            angle = random.uniform(0, math.tau)
-            radius = random.uniform(20, 38 + progress * 15)
-            px = hand_x + math.cos(angle) * radius
-            py = hand_y + math.sin(angle) * radius
-            vx = (hand_x - px) * 0.08
-            vy = (hand_y - py) * 0.08
-
-            particles.append(
-                Particle(px, py, random.choice(self.colors), random.randint(3, 6), 16, vx, vy)
-            )
-
-    def take_damage(self, damage, attacker_direction=0):
-        if self.shield_timer > 0:
-            return
-        self.hp = max(0, self.hp - damage)
-        self.hit_flash = 12
-        self.squash_amount = -0.4
-        self.knockback_vx += attacker_direction * 8.0
-
-        trigger_shake(min(14, 4 + damage * 0.5), 10)
-        trigger_hitstop(7 if damage >= 15 else 3)
-
-    def get_hand_position(self):
-        shoulder_x = self.x + self.direction * 12
-        shoulder_y = self.y - 14
-        sway = math.sin(self.animation_time * 2.5) * 2
-
+        # Charging particles & hum
         if self.charging:
-            progress = min(1.0, self.charge_time / self.charge_threshold)
-            eased = progress * progress * (3 - 2 * progress)
-            hand_x = shoulder_x - self.direction * (17 + eased * 18)
-            hand_y = shoulder_y + 15 + eased * 5 + sway
-        elif self.attack_timer > 0:
-            hand_x = shoulder_x + self.direction * 38
-            hand_y = shoulder_y - 2
-        else:
-            hand_x = shoulder_x + self.direction * 18
-            hand_y = shoulder_y + 14 + sway
-
-        return hand_x, hand_y
+            self.charge_time += 1
+            hx, hy = self.get_hand_position()
+            prog = min(1.0, self.charge_time / float(self.charge_threshold))
+            for _ in range(2):
+                ang = random.uniform(0, math.tau)
+                dist = random.uniform(22, 45 + prog * 20)
+                px = hx + math.cos(ang) * dist
+                py = hy + math.sin(ang) * dist
+                vx = (hx - px) * 0.1
+                vy = (hy - py) * 0.1
+                particles.append(Particle(px, py, random.choice(self.colors), random.uniform(2, 6), 14, vx, vy, shape='spark'))
 
     def release_attack(self):
         charged = self.charge_time >= self.charge_threshold
         self.charging = False
         self.charge_time = 0
 
-        cost = 25.0 if charged else self.min_attack_cost
-
+        cost = 25.0 if charged else 14.0
         if self.stamina >= cost:
             self.stamina -= cost
-            self.attack_timer = self.attack_duration
-            self.attack_flash = 7
+            self.attack_timer = 18
             self.squash_amount = 0.45 if charged else 0.25
 
             if charged:
-                recoil_distance = 22
-                self.x -= self.direction * recoil_distance
-                if self.is_player_one:
-                    self.x = max(60, min(WIDTH // 2 - 60, self.x))
-                else:
-                    self.x = max(WIDTH // 2 + 60, min(WIDTH - 60, self.x))
-                self.rect.centerx = int(self.x)
-
+                self.vx = -self.direction * 12.0  # Recoil
+                AUDIO.play('beam')
                 return Beam(self)
-
-            hand_x, hand_y = self.get_hand_position()
-            return Projectile(
-                hand_x, hand_y, self.direction, self.element_type, self,
-                charged=False, radius=8, damage=10
-            )
+            else:
+                hx, hy = self.get_hand_position()
+                AUDIO.play('shoot')
+                return Projectile(hx, hy, self.direction, self.element_type, self,
+                                  radius=10, damage=6, speed=13.0)
         return None
 
-    def draw(self, surface, opponent):
-        self.direction = 1 if opponent.x > self.x else -1
+    def trigger_ultimate(self, opponent):
+        if self.burst >= 100.0:
+            self.burst = 0.0
+            return UltimateSpell(self, opponent)
+        return None
 
-        main_color = self.color
-        highlight = self.colors[-1]
-
-        if self.hit_flash > 0 and (self.hit_flash // 2) % 2 == 0:
-            main_color = WHITE
-
-        t = self.animation_time
-        breathe = math.sin(t * 2) * 2
-
-        # Walk bob (lifts the upper body slightly on each step) and a lean
-        # into the direction of movement.
-        bob = -abs(math.sin(self.walk_phase)) * 4 * self.bob_amp
-        lean_x = self.lean * 5
-
-        upper_y = self.y + bob
-        shoulder_y = upper_y - 14
-        head_y = upper_y - 43 + breathe * 0.3 + lean_x * 0.3
-
-        # Squash-and-stretch pulse (attacks stretch, impacts/shield compress),
-        # anchored to the feet so it reads as a pop rather than a float.
-        s = self.squash_amount
-        body_w = 28 * (1 - s * 0.6)
-        body_h = 44 * (1 + s * 0.6)
-        body_bottom = upper_y + 17 + breathe * 0.3
-        body_top = body_bottom - body_h
-        body_rect = pygame.Rect(int(self.x - body_w / 2 + lean_x * 0.4), int(body_top), int(body_w), int(body_h))
-
-        if self.charging:
-            progress = min(1.0, self.charge_time / self.charge_threshold)
-            hand_x, hand_y = self.get_hand_position()
-            draw_glow(surface, hand_x, hand_y, 16 + progress * 42, main_color, int(70 + progress * 150))
+    def take_damage(self, damage, attacker_direction=0):
+        if self.is_invulnerable:
+            return False
 
         if self.shield_timer > 0:
-            draw_honeycomb_shield(surface, self.x, upper_y - 5, 46)
+            # Blocked with shield
+            damage = int(damage * 0.3)
+            self.stamina = max(0.0, self.stamina - 15.0)
+            AUDIO.play('hit')
+            trigger_shake(4, 5)
+            return False
 
-        pygame.draw.rect(surface, BLACK, (int(self.x - 10), int(self.y + 17), 8, 28))
-        pygame.draw.rect(surface, main_color, (int(self.x - 9), int(self.y + 18), 6, 26))
-        pygame.draw.rect(surface, BLACK, (int(self.x + 2), int(self.y + 17), 8, 28))
-        pygame.draw.rect(surface, main_color, (int(self.x + 3), int(self.y + 18), 6, 26))
+        self.hp = max(0, self.hp - damage)
+        self.hit_flash = 12
+        self.squash_amount = -0.4
+        self.vx += attacker_direction * 7.5
+        self.burst = min(100.0, self.burst + damage * 0.8)  # Gain burst on damage taken
+        AUDIO.play('hit')
+        trigger_shake(min(16, 5 + damage * 0.4), 10)
+        trigger_hitstop(6 if damage >= 20 else 3)
+        return True
 
+    def get_hand_position(self):
+        sway = math.sin(self.anim_t * 2.5) * 3
+        hx = self.x + self.direction * (24 if self.attack_timer > 0 else 16)
+        hy = self.y - 12 + sway
+        return hx, hy
+
+    def update_cpu_ai(self, opponent, projectiles, beams, ghosts):
+        if not self.is_cpu:
+            return
+
+        self.ai_timer -= 1
+        dist_x = abs(opponent.x - self.x)
+
+        # Danger detection: Incoming projectiles/beams
+        threat = None
+        for p in projectiles:
+            if p.owner is not self and math.copysign(1, p.direction) == math.copysign(1, self.x - p.x):
+                if abs(p.x - self.x) < 280:
+                    threat = p
+                    break
+
+        if self.cpu_difficulty == 'grandmaster':
+            # Grandmaster attempts Perfect Parries and aggressive dashing
+            if threat and abs(threat.x - self.x) < 140:
+                if self.shield_cooldown <= 0 and self.stamina >= 20:
+                    self.trigger_shield()
+                elif self.dash_cooldown <= 0:
+                    self.dash(ghosts)
+
+        elif self.cpu_difficulty == 'normal':
+            if threat and abs(threat.x - self.x) < 160:
+                if random.random() < 0.65 and self.shield_cooldown <= 0:
+                    self.trigger_shield()
+                elif random.random() < 0.35:
+                    self.jump()
+
+        # Decision making on timer
+        if self.ai_timer <= 0:
+            self.ai_timer = random.randint(15, 35)
+            # Distance management
+            if dist_x > 450:
+                self.vx = self.direction * self.speed * 0.9
+                if random.random() < 0.35:
+                    self.charging = True
+                    self.charge_time = 0
+            elif dist_x < 180:
+                self.vx = -self.direction * self.speed * 0.8
+                if random.random() < 0.4:
+                    self.trigger_barrage()
+            else:
+                if random.random() < 0.4:
+                    self.jump()
+
+            # Unleash Ultimate when full
+            if self.burst >= 100.0:
+                self.ai_action = 'ultimate'
+
+        # Attack execution while charging
+        if self.charging:
+            if self.charge_time >= self.charge_threshold:
+                attack = self.release_attack()
+                if isinstance(attack, Beam):
+                    beams.append(attack)
+                elif isinstance(attack, Projectile):
+                    projectiles.append(attack)
+            elif threat and dist_x < 200:
+                # Cancel or early release
+                attack = self.release_attack()
+                if attack:
+                    projectiles.append(attack)
+
+    def draw(self, surface, opponent):
+        # Look towards opponent
+        if opponent:
+            self.direction = 1 if opponent.x > self.x else -1
+
+        t = self.anim_t
+        breathe = math.sin(t * 2.0) * 2.5
+        s = self.squash_amount
+        upper_y = self.y + breathe
+        shoulder_y = upper_y - 18
+        head_y = upper_y - 48
+
+        # Ground Dynamic Shadow
+        shadow_scale = max(0.4, 1.0 - (GROUND_Y - 45 - self.y) / 250.0)
+        shadow_surf = pygame.Surface((60, 20), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow_surf, (0, 0, 0, int(110 * shadow_scale)), (0, 0, 60 * shadow_scale, 16 * shadow_scale))
+        surface.blit(shadow_surf, (int(self.x - 30 * shadow_scale), GROUND_Y - 8))
+
+        # 1. Flowing Segmented Cloth Cape
+        if len(self.cape_nodes) >= 4:
+            pts = [(self.cape_nodes[0][0], self.cape_nodes[0][1])]
+            for node in self.cape_nodes:
+                pts.append((node[0], node[1]))
+            # Backside of cape
+            for node in reversed(self.cape_nodes):
+                pts.append((node[0] - self.direction * 12, node[1] + 4))
+            pygame.draw.polygon(surface, self.dark, pts)
+            pygame.draw.lines(surface, self.accent, False, pts[:len(self.cape_nodes)], 2)
+
+        # 2. Charging Magic Circle Runes
+        if self.charging:
+            prog = min(1.0, self.charge_time / float(self.charge_threshold))
+            r = 30 + prog * 28
+            ring_surf = pygame.Surface((r * 2 + 10, r * 2 + 10), pygame.SRCALPHA)
+            rcx, rcy = r + 5, r + 5
+            pygame.draw.circle(ring_surf, (*self.highlight, int(180 * prog)), (rcx, rcy), int(r), 2)
+            # Spinning geometric inscribed triangle
+            for k in range(3):
+                ang = t * 3.5 + k * (math.tau / 3)
+                p1 = (rcx + math.cos(ang) * r, rcy + math.sin(ang) * r)
+                p2 = (rcx + math.cos(ang + math.tau / 3) * r, rcy + math.sin(ang + math.tau / 3) * r)
+                pygame.draw.line(ring_surf, (*self.color, int(140 * prog)), p1, p2, 1)
+            surface.blit(ring_surf, (int(self.x - rcx), int(GROUND_Y - 14)), special_flags=pygame.BLEND_RGBA_ADD)
+
+        # 3. Holographic Shield Dome
+        if self.shield_timer > 0:
+            sh_r = 54
+            sh_surf = pygame.Surface((sh_r * 2 + 10, sh_r * 2 + 10), pygame.SRCALPHA)
+            scx, scy = sh_r + 5, sh_r + 5
+            # Perfect parry bright golden tint during parry window
+            sh_col = GOLD if self.parry_window > 0 else (120, 220, 255)
+            pygame.draw.circle(sh_surf, (*sh_col, 80), (scx, scy), sh_r, 4)
+            # Hexagonal pattern
+            for k in range(6):
+                ang = t * 1.5 + k * (math.tau / 6)
+                px = scx + math.cos(ang) * sh_r
+                py = scy + math.sin(ang) * sh_r
+                pygame.draw.line(sh_surf, (*sh_col, 160), (scx, scy), (px, py), 1)
+            surface.blit(sh_surf, (int(self.x - scx), int(upper_y - scy)), special_flags=pygame.BLEND_RGBA_ADD)
+
+        # 4. Body & Armor
+        main_c = WHITE if (self.hit_flash > 0 and (self.hit_flash // 2) % 2 == 0) else self.color
+        body_w = int(32 * (1.0 - s * 0.5))
+        body_h = int(48 * (1.0 + s * 0.5))
+        body_rect = pygame.Rect(int(self.x - body_w // 2), int(upper_y - 20), body_w, body_h)
+
+        # Legs
+        pygame.draw.rect(surface, BLACK, (int(self.x - 12), int(upper_y + 18), 9, 26), border_radius=4)
+        pygame.draw.rect(surface, self.dark, (int(self.x - 10), int(upper_y + 19), 7, 24), border_radius=3)
+        pygame.draw.rect(surface, BLACK, (int(self.x + 3), int(upper_y + 18), 9, 26), border_radius=4)
+        pygame.draw.rect(surface, self.dark, (int(self.x + 5), int(upper_y + 19), 7, 24), border_radius=3)
+
+        # Torso & Core
         pygame.draw.rect(surface, BLACK, (body_rect.x - 2, body_rect.y - 2, body_rect.width + 4, body_rect.height + 4), border_radius=10)
-        pygame.draw.rect(surface, main_color, body_rect, border_radius=8)
+        pygame.draw.rect(surface, main_c, body_rect, border_radius=8)
 
-        pygame.draw.circle(surface, BLACK, (int(self.x + lean_x), int(head_y)), 15)
-        pygame.draw.circle(surface, main_color, (int(self.x + lean_x), int(head_y)), 13)
-        pygame.draw.circle(surface, BLACK, (int(self.x + lean_x + self.direction * 5), int(head_y - 1)), 3)
+        # Glowing Elemental Chest Core
+        core_y = upper_y - 4
+        pygame.draw.circle(surface, self.highlight, (int(self.x), int(core_y)), 7)
+        pygame.draw.circle(surface, WHITE, (int(self.x), int(core_y)), 3)
+        draw_glow(surface, self.x, core_y, 16, self.highlight, 0.7)
 
-        hand_x, hand_y = self.get_hand_position()
-        pygame.draw.line(surface, BLACK, (self.x, shoulder_y), (hand_x, hand_y), 10)
-        pygame.draw.line(surface, highlight, (self.x, shoulder_y), (hand_x, hand_y), 7)
-        pygame.draw.circle(surface, WHITE, (int(hand_x), int(hand_y)), 6)
+        # Head & Visor
+        pygame.draw.circle(surface, BLACK, (int(self.x), int(head_y)), 16)
+        pygame.draw.circle(surface, main_c, (int(self.x), int(head_y)), 14)
+        # Element Head Crest / Horns
+        if self.element_type == 'fire':
+            pygame.draw.polygon(surface, self.highlight, [(self.x - 6, head_y - 12), (self.x, head_y - 24), (self.x + 6, head_y - 12)])
+        elif self.element_type == 'water':
+            pygame.draw.polygon(surface, self.accent, [(self.x, head_y - 14), (self.x - self.direction * 14, head_y - 22), (self.x, head_y - 8)])
+        elif self.element_type == 'earth':
+            pygame.draw.rect(surface, self.highlight, (int(self.x - 8), int(head_y - 20), 16, 7), border_radius=2)
+        elif self.element_type == 'lightning':
+            pygame.draw.lines(surface, self.highlight, False, [(self.x - 8, head_y - 12), (self.x, head_y - 24), (self.x + 8, head_y - 14)], 3)
+        else: # wind
+            pygame.draw.arc(surface, self.highlight, (self.x - 12, head_y - 22, 24, 18), 0, math.pi, 3)
+
+        # Glowing Visor / Eyes
+        eye_x = int(self.x + self.direction * 6)
+        eye_y = int(head_y)
+        pygame.draw.circle(surface, self.highlight, (eye_x, eye_y), 4)
+        pygame.draw.circle(surface, WHITE, (eye_x, eye_y), 2)
+
+        # Arms & Casting Relic Hands
+        hx, hy = self.get_hand_position()
+        pygame.draw.line(surface, BLACK, (self.x, shoulder_y), (hx, hy), 8)
+        pygame.draw.line(surface, self.highlight, (self.x, shoulder_y), (hx, hy), 5)
+        pygame.draw.circle(surface, WHITE, (int(hx), int(hy)), 5)
+
+        # 5. Orbiting Elemental Catalysts (3D Elliptical Orbits)
+        for idx in range(3):
+            orb_ang = t * 2.0 + idx * (math.tau / 3)
+            orb_x = self.x + math.cos(orb_ang) * 32
+            orb_y = upper_y - 10 + math.sin(orb_ang) * 12
+            orb_z = math.sin(orb_ang)  # Depth
+            orb_r = max(2, int(4 + orb_z * 2))
+            draw_glow(surface, orb_x, orb_y, orb_r * 2.5, self.highlight, 0.5)
+            pygame.draw.circle(surface, self.highlight, (int(orb_x), int(orb_y)), orb_r)
+            pygame.draw.circle(surface, WHITE, (int(orb_x), int(orb_y)), max(1, orb_r // 2))
 
 
 # =====================================================
-# UI HELPERS & SELECTION SCREEN
+# COMBAT RESOLUTION & PERFECT PARRY ENGINE
 # =====================================================
 
-def draw_health_and_stamina_bar(surface, x, y, player, label):
-    width = 380
-    height = 20
+def resolve_combat_interactions(projectiles, beams, champions, particles, shockwaves, floating_texts, clash_manager):
+    # 1. Opposing Projectile collisions & Clashes
+    destroyed_p = set()
+    for i, p1 in enumerate(projectiles):
+        if id(p1) in destroyed_p:
+            continue
+        for p2 in projectiles[i + 1:]:
+            if id(p2) in destroyed_p or p1.owner is p2.owner:
+                continue
+            if p1.rect.colliderect(p2.rect):
+                cx = (p1.x + p2.x) / 2
+                cy = (p1.y + p2.y) / 2
+                shockwaves.append(ShockwaveRing(cx, cy, WHITE, 50, 15, 3))
+                floating_texts.append(FloatingText(cx, cy - 20, "CLASH!", GOLD, SMALL_FONT))
+                trigger_shake(4, 5)
+                AUDIO.play('clash')
+                destroyed_p.add(id(p1))
+                destroyed_p.add(id(p2))
+                for _ in range(8):
+                    particles.append(Particle(cx, cy, random.choice(p1.colors + p2.colors), random.uniform(3, 6), 14,
+                                              vx=random.uniform(-4, 4), vy=random.uniform(-4, 4), shape='spark'))
+                break
 
-    pygame.draw.rect(surface, (55, 35, 50), (x, y, width, height), border_radius=6)
-    health_width = int(width * max(0, player.display_hp) / 100)
+    if destroyed_p:
+        projectiles[:] = [p for p in projectiles if id(p) not in destroyed_p]
 
-    if health_width > 0:
-        pygame.draw.rect(surface, player.color, (x, y, health_width, height), border_radius=6)
+    # 2. Beams shred incoming projectiles
+    destroyed_p = set()
+    for proj in projectiles:
+        if id(proj) in destroyed_p:
+            continue
+        for beam in beams:
+            if beam.owner is proj.owner:
+                continue
+            if proj.rect.colliderect(beam.get_live_rect()):
+                shockwaves.append(ShockwaveRing(proj.x, proj.y, beam.highlight, 40, 12, 2))
+                destroyed_p.add(id(proj))
+                break
+    if destroyed_p:
+        projectiles[:] = [p for p in projectiles if id(p) not in destroyed_p]
 
-    pygame.draw.rect(surface, WHITE, (x, y, width, height), 2, border_radius=6)
-    text = FONT.render(f"{label}: {int(player.hp)} HP", True, WHITE)
-    surface.blit(text, (x, y - 26))
+    # 3. Beam vs Beam Clash Detection
+    for i, b1 in enumerate(beams):
+        for b2 in beams[i + 1:]:
+            if b1.owner is b2.owner:
+                continue
+            if b1.get_live_rect().colliderect(b2.get_live_rect()) and not clash_manager.active:
+                clash_manager.start_clash(b1, b2)
 
-    stamina_y = y + height + 6
-    stamina_height = 10
-    pygame.draw.rect(surface, (40, 45, 65), (x, stamina_y, width, stamina_height), border_radius=4)
-    stamina_width = int(width * max(0, player.stamina) / 100.0)
+    # 4. Projectile impacts against Champions & PERFECT PARRY
+    for proj in projectiles[:]:
+        for champ in champions:
+            if proj.owner is champ:
+                continue
+            if proj.rect.colliderect(champ.rect):
+                # Check for PERFECT PARRY!
+                if champ.parry_window > 0:
+                    AUDIO.play('parry')
+                    champ.parries_landed += 1
+                    champ.stamina = min(champ.max_stamina, champ.stamina + 35.0)
+                    champ.burst = min(100.0, champ.burst + 25.0)
+                    shockwaves.append(ShockwaveRing(champ.x, champ.y, GOLD, 120, 25, 5))
+                    floating_texts.append(FloatingText(champ.x, champ.y - 60, "PERFECT PARRY!", GOLD, HEADER_FONT))
+                    trigger_shake(8, 8)
+                    trigger_hitstop(5)
 
-    if stamina_width > 0:
-        pygame.draw.rect(surface, (230, 200, 50), (x, stamina_y, stamina_width, stamina_height), border_radius=4)
-    pygame.draw.rect(surface, WHITE, (x, stamina_y, width, stamina_height), 1, border_radius=4)
+                    # Reverse projectile!
+                    proj.direction = -proj.direction
+                    proj.owner = champ
+                    proj.speed *= 1.4
+                    proj.damage = int(proj.damage * 1.3)
+                    proj.is_parried = True
+                    break
 
-    # Display Shield Cooldown indicator if cooling down
-    if player.shield_cooldown > 0:
-        cd_secs = math.ceil(player.shield_cooldown / 60)
-        cd_text = SMALL_FONT.render(f"Shield CD: {cd_secs}s", True, (200, 150, 150))
-        surface.blit(cd_text, (x + width - cd_text.get_width(), y - 26))
+                # Standard Hit
+                mult = get_type_multiplier(proj.element_type, champ.element_type)
+                final_dmg = int(proj.damage * mult)
+                if champ.take_damage(final_dmg, proj.direction):
+                    proj.owner.total_damage_dealt += final_dmg
+                    proj.owner.hits_landed += 1
+                    proj.owner.combo_count += 1
+                    proj.owner.combo_timer = 90
+                    # Floating combat text
+                    crit_txt = f"{final_dmg} CRIT!" if mult > 1.2 else f"{final_dmg}"
+                    crit_col = CRIT_RED if mult > 1.2 else (GOLD if mult >= 1.0 else (170, 200, 255))
+                    floating_texts.append(FloatingText(champ.x, champ.y - 35, crit_txt, crit_col, FONT))
+                    if mult > 1.2:
+                        floating_texts.append(FloatingText(champ.x, champ.y - 55, "SUPER EFFECTIVE!", GOLD, SMALL_FONT))
 
+                for _ in range(8):
+                    particles.append(Particle(proj.x, proj.y, random.choice(proj.colors), random.uniform(2, 5), 14,
+                                              vx=random.uniform(-3, 3), vy=random.uniform(-3, 3), shape='spark'))
+                projectiles.remove(proj)
+                break
 
-class ElementScrollbar:
-    """A horizontal scrollbar/slider for picking an element: drag the thumb,
-    click anywhere on the track to jump, or snap it via keyboard."""
-
-    def __init__(self, x, y, width, height, elements):
-        self.rect = pygame.Rect(x, y, width, height)
-        self.elements = elements
-        self.count = len(elements)
-        self.segment_width = width / self.count
-        self.index = 0
-        self.dragging = False
-
-    def _index_from_x(self, mx):
-        rel = mx - self.rect.x
-        idx = int(rel // self.segment_width)
-        return max(0, min(self.count - 1, idx))
-
-    def set_index(self, idx):
-        self.index = max(0, min(self.count - 1, idx))
-
-    def handle_event(self, event):
-        """Returns True if the selection changed."""
-        changed = False
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.rect.collidepoint(event.pos):
-                self.dragging = True
-                new_idx = self._index_from_x(event.pos[0])
-                if new_idx != self.index:
-                    self.index = new_idx
-                    changed = True
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self.dragging = False
-        elif event.type == pygame.MOUSEMOTION and self.dragging:
-            new_idx = self._index_from_x(event.pos[0])
-            if new_idx != self.index:
-                self.index = new_idx
-                changed = True
-        return changed
-
-    def draw(self, surface, thumb_color, mouse_pos):
-        # Track
-        pygame.draw.rect(surface, (26, 32, 52), self.rect, border_radius=self.rect.height // 2)
-        pygame.draw.rect(surface, (95, 115, 150), self.rect, 2, border_radius=self.rect.height // 2)
-
-        # Segment divider ticks + labels
-        for i in range(self.count):
-            seg_x = self.rect.x + i * self.segment_width
-            if i > 0:
-                pygame.draw.line(
-                    surface, (70, 85, 115),
-                    (seg_x, self.rect.y + 5), (seg_x, self.rect.bottom - 5), 2
-                )
-            label = SMALL_FONT.render(ELEMENT_DATA[self.elements[i]]['name'], True, (210, 220, 240))
-            label_x = seg_x + self.segment_width / 2 - label.get_width() / 2
-            surface.blit(label, (label_x, self.rect.bottom + 6))
-
-        # Thumb
-        thumb_w = self.segment_width - 10
-        thumb_x = self.rect.x + self.index * self.segment_width + 5
-        thumb_rect = pygame.Rect(int(thumb_x), self.rect.y - 5, int(thumb_w), self.rect.height + 10)
-        hovered = thumb_rect.collidepoint(mouse_pos) or self.dragging
-        pygame.draw.rect(surface, thumb_color, thumb_rect, border_radius=10)
-        pygame.draw.rect(surface, WHITE if hovered else (210, 220, 240), thumb_rect, 3, border_radius=10)
+    # 5. Beam impacts against Champions
+    for beam in beams:
+        for champ in champions:
+            if beam.owner is champ or champ in beam.hit_targets:
+                continue
+            if beam.get_live_rect().colliderect(champ.rect):
+                beam.hit_targets.add(champ)
+                mult = get_type_multiplier(beam.element_type, champ.element_type)
+                final_dmg = int(beam.damage * mult)
+                if champ.take_damage(final_dmg, beam.direction):
+                    beam.owner.total_damage_dealt += final_dmg
+                    beam.owner.hits_landed += 1
+                    beam.owner.combo_count += 1
+                    beam.owner.combo_timer = 90
+                    crit_txt = f"{final_dmg} BEAM CRIT!" if mult > 1.2 else f"{final_dmg}"
+                    floating_texts.append(FloatingText(champ.x, champ.y - 45, crit_txt, GOLD, HEADER_FONT))
+                shockwaves.append(ShockwaveRing(champ.x, champ.y, beam.highlight, 90, 18, 4))
 
 
-class CharacterSelectionScreen:
+# =====================================================
+# POLISHED BATTLE HUD & COMBAT UI
+# =====================================================
+
+def draw_battle_hud(surface, p1, p2, match_time, stage_name):
+    # Top Bar Background Plate
+    bar_plate = pygame.Surface((WIDTH, 110), pygame.SRCALPHA)
+    pygame.draw.rect(bar_plate, (12, 16, 32, 220), (0, 0, WIDTH, 95))
+    pygame.draw.line(bar_plate, (60, 80, 130, 180), (0, 95), (WIDTH, 95), 2)
+    surface.blit(bar_plate, (0, 0))
+
+    # Match Timer in Center
+    secs = max(0, int(match_time))
+    timer_surf = TITLE_FONT.render(f"{secs}", True, WHITE)
+    surface.blit(timer_surf, (WIDTH // 2 - timer_surf.get_width() // 2, 10))
+
+    # Clickable Menu button in battle
+    mx, my = pygame.mouse.get_pos()
+    hud_menu_btn = pygame.Rect(WIDTH // 2 - 48, 64, 96, 22)
+    m_hover = hud_menu_btn.collidepoint(mx, my)
+    pygame.draw.rect(surface, (45, 55, 85) if m_hover else (22, 28, 48), hud_menu_btn, border_radius=5)
+    pygame.draw.rect(surface, GOLD if m_hover else (70, 90, 135), hud_menu_btn, 1, border_radius=5)
+    m_txt = TINY_FONT.render("< MENU (ESC)", True, GOLD if m_hover else (190, 210, 240))
+    surface.blit(m_txt, (hud_menu_btn.centerx - m_txt.get_width() // 2, hud_menu_btn.centery - m_txt.get_height() // 2))
+
+    # Player 1 HUD (Left)
+    draw_player_hud_card(surface, 40, 15, p1, is_p1=True)
+
+    # Player 2 / CPU HUD (Right)
+    draw_player_hud_card(surface, WIDTH - 470, 15, p2, is_p1=False)
+
+    # Dynamic Combo Counter
+    if p1.combo_count >= 2:
+        combo_txt = HEADER_FONT.render(f"{p1.combo_count} HITS!", True, GOLD)
+        surface.blit(combo_txt, (180, 115))
+    if p2.combo_count >= 2:
+        combo_txt = HEADER_FONT.render(f"{p2.combo_count} HITS!", True, GOLD)
+        surface.blit(combo_txt, (WIDTH - 180 - combo_txt.get_width(), 115))
+
+
+def draw_player_hud_card(surface, x, y, player, is_p1=True):
+    width = 430
+    elem = ELEMENT_DATA[player.element_type]
+
+    # Avatar Badge Frame
+    badge_x = x if is_p1 else (x + width - 68)
+    pygame.draw.rect(surface, (20, 26, 48), (badge_x, y + 2, 64, 64), border_radius=12)
+    pygame.draw.rect(surface, elem['main'], (badge_x, y + 2, 64, 64), 3, border_radius=12)
+    elem_icon = HEADER_FONT.render(elem['name'][:2], True, elem['highlight'])
+    surface.blit(elem_icon, (badge_x + 32 - elem_icon.get_width() // 2, y + 34 - elem_icon.get_height() // 2))
+
+    bars_x = (x + 78) if is_p1 else x
+    bars_w = 340
+
+    # Name & Element Title
+    p_tag = "P1" if is_p1 else ("CPU" if player.is_cpu else "P2")
+    title_surf = FONT.render(f"{p_tag}: {elem['name']}", True, WHITE)
+    surface.blit(title_surf, (bars_x, y - 2))
+
+    hp_num = SMALL_FONT.render(f"{int(player.hp)} / {int(player.max_hp)}", True, (210, 230, 255))
+    surface.blit(hp_num, (bars_x + bars_w - hp_num.get_width(), y - 2))
+
+    # Health Bar (with dynamic red damage lag)
+    bar_y = y + 22
+    bar_h = 16
+    pygame.draw.rect(surface, (45, 20, 30), (bars_x, bar_y, bars_w, bar_h), border_radius=5)
+
+    lag_w = int(bars_w * max(0.0, player.damage_lag_hp) / player.max_hp)
+    if lag_w > 0:
+        pygame.draw.rect(surface, (220, 70, 70), (bars_x, bar_y, lag_w, bar_h), border_radius=5)
+
+    hp_w = int(bars_w * max(0.0, player.display_hp) / player.max_hp)
+    if hp_w > 0:
+        pygame.draw.rect(surface, elem['main'], (bars_x, bar_y, hp_w, bar_h), border_radius=5)
+        pygame.draw.rect(surface, elem['highlight'], (bars_x, bar_y, hp_w, bar_h // 2), border_radius=4)
+    pygame.draw.rect(surface, (180, 205, 240), (bars_x, bar_y, bars_w, bar_h), 2, border_radius=5)
+
+    # Stamina Bar
+    st_y = bar_y + bar_h + 4
+    st_h = 8
+    pygame.draw.rect(surface, (25, 30, 48), (bars_x, st_y, bars_w, st_h), border_radius=3)
+    st_w = int(bars_w * max(0.0, player.stamina) / player.max_stamina)
+    if st_w > 0:
+        pygame.draw.rect(surface, (245, 210, 50), (bars_x, st_y, st_w, st_h), border_radius=3)
+
+    # Burst Gauge (Overdrive Meter)
+    burst_y = st_y + st_h + 4
+    burst_h = 7
+    pygame.draw.rect(surface, (30, 20, 45), (bars_x, burst_y, bars_w, burst_h), border_radius=3)
+    b_w = int(bars_w * max(0.0, min(100.0, player.burst)) / 100.0)
+    b_col = GOLD if player.burst >= 100.0 else (60, 180, 255)
+    if b_w > 0:
+        pygame.draw.rect(surface, b_col, (bars_x, burst_y, b_w, burst_h), border_radius=3)
+
+    # Indicators: Shield Cooldown / Burst Ready
+    if player.burst >= 100.0:
+        over_txt = TINY_FONT.render("★ OVERDRIVE READY (Q) ★", True, GOLD)
+        surface.blit(over_txt, (bars_x, burst_y + burst_h + 2))
+    elif player.shield_cooldown > 0:
+        cd_s = math.ceil(player.shield_cooldown / 60.0)
+        cd_txt = TINY_FONT.render(f"Shield CD: {cd_s}s", True, (210, 160, 160))
+        surface.blit(cd_txt, (bars_x, burst_y + burst_h + 2))
+
+
+# =====================================================
+# CHARACTER & STAGE SELECTION SCREEN
+# =====================================================
+
+class SelectionScreen:
     def __init__(self):
-        self.elements = ['fire', 'water', 'earth']
+        self.p1_idx = 0
+        self.p2_idx = 1
+        self.stage_idx = 0
+        self.stages = ['fire', 'water', 'lightning', 'astral']
+        self.mode = 'VS_CPU'
+        self.ai_difficulty = 'normal'
+        self.difficulties = ['apprentice', 'normal', 'grandmaster']
+        self.diff_idx = 1
 
-        self.p1_card_rect = pygame.Rect(100, 160, 360, 320)
-        self.p2_card_rect = pygame.Rect(640, 160, 360, 320)
-        self.start_btn_rect = pygame.Rect(WIDTH // 2 - 180, 540, 360, 50)
-
-        self.p1_scrollbar = ElementScrollbar(
-            self.p1_card_rect.x + 30, self.p1_card_rect.y + 215, self.p1_card_rect.width - 60, 36, self.elements
-        )
-        self.p2_scrollbar = ElementScrollbar(
-            self.p2_card_rect.x + 30, self.p2_card_rect.y + 215, self.p2_card_rect.width - 60, 36, self.elements
-        )
-        self.p2_scrollbar.set_index(1)
-
-    @property
-    def p1_idx(self):
-        return self.p1_scrollbar.index
-
-    @property
-    def p2_idx(self):
-        return self.p2_scrollbar.index
+        self.back_btn = pygame.Rect(40, 24, 160, 42)
+        self.start_btn = pygame.Rect(WIDTH // 2 - 160, 610, 320, 52)
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_a:
-                self.p1_scrollbar.set_index((self.p1_scrollbar.index - 1) % len(self.elements))
+            if event.key == pygame.K_ESCAPE or event.key == pygame.K_b:
+                AUDIO.play('move')
+                return "BACK"
+
+            # P1 element toggle: A / D
+            elif event.key == pygame.K_a:
+                self.p1_idx = (self.p1_idx - 1) % len(ELEMENT_LIST)
+                AUDIO.play('move')
             elif event.key == pygame.K_d:
-                self.p1_scrollbar.set_index((self.p1_scrollbar.index + 1) % len(self.elements))
+                self.p1_idx = (self.p1_idx + 1) % len(ELEMENT_LIST)
+                AUDIO.play('move')
 
+            # P2 element toggle: LEFT / RIGHT
             elif event.key == pygame.K_LEFT:
-                self.p2_scrollbar.set_index((self.p2_scrollbar.index - 1) % len(self.elements))
+                self.p2_idx = (self.p2_idx - 1) % len(ELEMENT_LIST)
+                AUDIO.play('move')
             elif event.key == pygame.K_RIGHT:
-                self.p2_scrollbar.set_index((self.p2_scrollbar.index + 1) % len(self.elements))
+                self.p2_idx = (self.p2_idx + 1) % len(ELEMENT_LIST)
+                AUDIO.play('move')
 
-            elif event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
-                return True
+            # Stage toggle: TAB
+            elif event.key == pygame.K_TAB:
+                self.stage_idx = (self.stage_idx + 1) % len(self.stages)
+                AUDIO.play('move')
+
+            # Difficulty toggle: T
+            elif event.key == pygame.K_t:
+                self.diff_idx = (self.diff_idx + 1) % len(self.difficulties)
+                self.ai_difficulty = self.difficulties[self.diff_idx]
+                AUDIO.play('move')
+
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                AUDIO.play('select')
+                return "START"
 
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.start_btn_rect.collidepoint(event.pos):
-                return True
+            if self.back_btn.collidepoint(event.pos):
+                AUDIO.play('move')
+                return "BACK"
+            if self.start_btn.collidepoint(event.pos):
+                AUDIO.play('select')
+                return "START"
 
-        self.p1_scrollbar.handle_event(event)
-        self.p2_scrollbar.handle_event(event)
-
-        return False
+        return None
 
     def draw(self, surface):
-        surface.fill(BG)
-        title = TITLE_FONT.render("SELECT YOUR ELEMENT", True, WHITE)
-        surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 40))
+        surface.fill(DARK_BG)
 
-        pygame.draw.line(surface, (50, 65, 95), (WIDTH // 2, 120), (WIDTH // 2, 500), 3)
+        # Background decorative glow
+        draw_glow(surface, 280, 320, 240, ELEMENT_DATA[ELEMENT_LIST[self.p1_idx]]['main'], 0.25)
+        draw_glow(surface, 920, 320, 240, ELEMENT_DATA[ELEMENT_LIST[self.p2_idx]]['main'], 0.25)
 
-        mouse_pos = pygame.mouse.get_pos()
-        mx, my = mouse_pos
+        # Header Title
+        title = HUGE_FONT.render("CHOOSE YOUR CHAMPION", True, WHITE)
+        surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 25))
 
-        # P1 Box
-        p1_elem = self.elements[self.p1_idx]
-        p1_data = ELEMENT_DATA[p1_elem]
-        p1_hover = self.p1_card_rect.collidepoint(mx, my)
+        sub = FONT.render(f"MODE: {self.mode.replace('_', ' ')}  |  STAGE: {self.stages[self.stage_idx].upper()} [TAB]  |  CPU: {self.ai_difficulty.upper()} [T]", True, GOLD)
+        surface.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 95))
 
-        pygame.draw.rect(surface, p1_data['main'], self.p1_card_rect, border_radius=16)
-        pygame.draw.rect(surface, (255, 255, 255) if p1_hover else (180, 200, 230), self.p1_card_rect, 6 if p1_hover else 4, border_radius=16)
+        # Back Button (Top Left)
+        mx, my = pygame.mouse.get_pos()
+        b_hover = self.back_btn.collidepoint(mx, my)
+        b_col = (45, 60, 100) if b_hover else (24, 30, 52)
+        pygame.draw.rect(surface, b_col, self.back_btn, border_radius=10)
+        pygame.draw.rect(surface, GOLD if b_hover else (80, 105, 150), self.back_btn, 2, border_radius=10)
+        b_txt = FONT.render("< MENU (ESC)", True, GOLD if b_hover else WHITE)
+        surface.blit(b_txt, (self.back_btn.centerx - b_txt.get_width() // 2, self.back_btn.centery - b_txt.get_height() // 2))
 
-        p1_title = TITLE_FONT.render("PLAYER 1", True, WHITE)
-        p1_elem_txt = LARGE_FONT.render(p1_data['name'], True, WHITE)
-        p1_hint = FONT.render("Drag the bar or press A / D", True, (220, 235, 255))
+        # P1 Card (Left)
+        p1_elem = ELEMENT_LIST[self.p1_idx]
+        self.draw_champion_card(surface, 90, 140, p1_elem, "PLAYER 1", "Press A / D to Change")
 
-        surface.blit(p1_title, (280 - p1_title.get_width() // 2, 180))
-        surface.blit(p1_elem_txt, (280 - p1_elem_txt.get_width() // 2, 260))
-        self.p1_scrollbar.draw(surface, p1_data['main'], mouse_pos)
-        surface.blit(p1_hint, (280 - p1_hint.get_width() // 2, 465))
+        # VS Emblem in Center
+        vs_surf = TITLE_FONT.render("V S", True, (150, 175, 220))
+        surface.blit(vs_surf, (WIDTH // 2 - vs_surf.get_width() // 2, 330))
 
-        # P2 Box
-        p2_elem = self.elements[self.p2_idx]
-        p2_data = ELEMENT_DATA[p2_elem]
-        p2_hover = self.p2_card_rect.collidepoint(mx, my)
+        # P2 / CPU Card (Right)
+        p2_elem = ELEMENT_LIST[self.p2_idx]
+        p2_label = "CPU OPPONENT" if self.mode == 'VS_CPU' else "PLAYER 2"
+        self.draw_champion_card(surface, WIDTH - 470, 140, p2_elem, p2_label, "Press LEFT / RIGHT to Change")
 
-        pygame.draw.rect(surface, p2_data['main'], self.p2_card_rect, border_radius=16)
-        pygame.draw.rect(surface, (255, 255, 255) if p2_hover else (180, 200, 230), self.p2_card_rect, 6 if p2_hover else 4, border_radius=16)
+        # Start Match Button
+        hover = self.start_btn.collidepoint(mx, my)
+        btn_c = (55, 190, 95) if hover else (40, 145, 75)
+        pygame.draw.rect(surface, btn_c, self.start_btn, border_radius=14)
+        pygame.draw.rect(surface, WHITE, self.start_btn, 3, border_radius=14)
+        btn_txt = HEADER_FONT.render("START BATTLE (SPACE)", True, WHITE)
+        surface.blit(btn_txt, (WIDTH // 2 - btn_txt.get_width() // 2, 622))
 
-        p2_title = TITLE_FONT.render("PLAYER 2", True, WHITE)
-        p2_elem_txt = LARGE_FONT.render(p2_data['name'], True, WHITE)
-        p2_hint = FONT.render("Drag the bar or press LEFT / RIGHT", True, (220, 235, 255))
+    def draw_champion_card(self, surface, x, y, elem_key, header_title, hint_text):
+        elem = ELEMENT_DATA[elem_key]
+        w, h = 380, 440
 
-        surface.blit(p2_title, (820 - p2_title.get_width() // 2, 180))
-        surface.blit(p2_elem_txt, (820 - p2_elem_txt.get_width() // 2, 260))
-        self.p2_scrollbar.draw(surface, p2_data['main'], mouse_pos)
-        surface.blit(p2_hint, (820 - p2_hint.get_width() // 2, 465))
+        pygame.draw.rect(surface, (18, 24, 44), (x, y, w, h), border_radius=18)
+        pygame.draw.rect(surface, elem['main'], (x, y, w, h), 4, border_radius=18)
 
-        # Start Button
-        btn_hover = self.start_btn_rect.collidepoint(mx, my)
-        btn_color = (60, 180, 90) if btn_hover else (40, 140, 70)
+        # Card Header
+        lbl = FONT.render(header_title, True, (180, 205, 245))
+        surface.blit(lbl, (x + w // 2 - lbl.get_width() // 2, y + 18))
 
-        pygame.draw.rect(surface, btn_color, self.start_btn_rect, border_radius=12)
-        pygame.draw.rect(surface, WHITE, self.start_btn_rect, 2, border_radius=12)
+        name = TITLE_FONT.render(elem['name'], True, elem['highlight'])
+        surface.blit(name, (x + w // 2 - name.get_width() // 2, y + 48))
 
-        start_txt = FONT.render("CLICK HERE TO START BATTLE", True, WHITE)
-        surface.blit(start_txt, (WIDTH // 2 - start_txt.get_width() // 2, 552))
+        title = SMALL_FONT.render(elem['title'], True, (210, 230, 255))
+        surface.blit(title, (x + w // 2 - title.get_width() // 2, y + 105))
+
+        # Avatar Emblem Circle
+        cx, cy = x + w // 2, y + 180
+        pygame.draw.circle(surface, elem['dark'], (cx, cy), 46)
+        pygame.draw.circle(surface, elem['main'], (cx, cy), 44, 3)
+        draw_glow(surface, cx, cy, 40, elem['main'], 0.5)
+        initials = HEADER_FONT.render(elem['name'][:2], True, WHITE)
+        surface.blit(initials, (cx - initials.get_width() // 2, cy - initials.get_height() // 2))
+
+        # Stats Radar / Bar display
+        stats = elem['stats']
+        stat_y = y + 245
+        for sname, sval in [('POWER', stats['power']), ('SPEED', stats['speed']), ('DEFENSE', stats['defense']), ('RANGE', stats['range'])]:
+            s_lbl = TINY_FONT.render(sname, True, (160, 185, 220))
+            surface.blit(s_lbl, (x + 35, stat_y))
+            pygame.draw.rect(surface, (30, 38, 64), (x + 115, stat_y + 3, 220, 8), border_radius=3)
+            pygame.draw.rect(surface, elem['highlight'], (x + 115, stat_y + 3, int(220 * sval / 100.0), 8), border_radius=3)
+            stat_y += 24
+
+        # Ultimate Move Name
+        ult_lbl = TINY_FONT.render(f"OVERDRIVE: {elem['ult_name']}", True, GOLD)
+        surface.blit(ult_lbl, (x + w // 2 - ult_lbl.get_width() // 2, y + 360))
+
+        # Hint
+        hint = SMALL_FONT.render(hint_text, True, (140, 165, 210))
+        surface.blit(hint, (x + w // 2 - hint.get_width() // 2, y + 400))
 
 
 # =====================================================
-# GAME INITIALIZATION
+# MAIN MENU SCREEN
 # =====================================================
 
-selection_screen = CharacterSelectionScreen()
-state = "SELECTION"
+class MainMenuScreen:
+    def __init__(self):
+        self.options = [
+            ("ARCADE MODE", "VS_CPU_LADDER"),
+            ("VS CPU BATTLE", "VS_CPU"),
+            ("2-PLAYER VERSUS", "VS_P2"),
+            ("TRAINING DOJO", "TRAINING"),
+            ("HOW TO PLAY & CONTROLS", "HELP"),
+            ("EXIT GAME", "EXIT")
+        ]
+        self.selected_idx = 0
+        self.particles = [Particle(random.uniform(0, WIDTH), random.uniform(0, HEIGHT),
+                                   random.choice([(255, 100, 30), (40, 180, 255), (60, 240, 110), (160, 60, 255)]),
+                                   random.uniform(2, 5), random.randint(40, 100),
+                                   vx=random.uniform(-0.5, 0.5), vy=random.uniform(-1, 0.5)) for _ in range(50)]
 
-player1 = None
-player2 = None
-projectiles = []
-beams = []
-particles = []
-clash_effects = []
+    def handle_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP or event.key == pygame.K_w:
+                self.selected_idx = (self.selected_idx - 1) % len(self.options)
+                AUDIO.play('move')
+            elif event.key == pygame.K_DOWN or event.key == pygame.K_s:
+                self.selected_idx = (self.selected_idx + 1) % len(self.options)
+                AUDIO.play('move')
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                AUDIO.play('select')
+                return self.options[self.selected_idx][1]
 
-game_over = False
-winner_text = ""
-background_time = 0.0
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            for i, opt in enumerate(self.options):
+                btn_rect = pygame.Rect(WIDTH // 2 - 200, 270 + i * 58, 400, 46)
+                if btn_rect.collidepoint(mx, my):
+                    AUDIO.play('select')
+                    return opt[1]
 
-running = True
+        return None
+
+    def update(self):
+        for p in self.particles:
+            p.update()
+            if p.is_dead():
+                p.x = random.uniform(0, WIDTH)
+                p.y = HEIGHT
+                p.lifetime = random.randint(40, 100)
+                p.size = random.uniform(2, 5)
+
+    def draw(self, surface):
+        surface.fill(DARK_BG)
+
+        for p in self.particles:
+            p.draw(surface)
+
+        # Central Elemental Glow
+        draw_glow(surface, WIDTH // 2, 130, 220, (235, 75, 30), 0.3)
+        draw_glow(surface, WIDTH // 2, 130, 170, (40, 180, 255), 0.3)
+
+        # Title
+        title = HUGE_FONT.render("ELEMENTAL CLASH", True, WHITE)
+        overdrive = HUGE_FONT.render("O V E R D R I V E", True, GOLD)
+        surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 50))
+        surface.blit(overdrive, (WIDTH // 2 - overdrive.get_width() // 2, 125))
+
+        sub = FONT.render("THE DYNAMIC ARENA FIGHTER", True, (160, 195, 245))
+        surface.blit(sub, (WIDTH // 2 - sub.get_width() // 2, 205))
+
+        # Menu buttons
+        mx, my = pygame.mouse.get_pos()
+        for i, (label, code) in enumerate(self.options):
+            btn_rect = pygame.Rect(WIDTH // 2 - 200, 270 + i * 58, 400, 46)
+            is_hover = btn_rect.collidepoint(mx, my) or (i == self.selected_idx)
+            btn_col = (45, 60, 100) if is_hover else (22, 28, 50)
+            pygame.draw.rect(surface, btn_col, btn_rect, border_radius=10)
+            pygame.draw.rect(surface, GOLD if is_hover else (80, 105, 150), btn_rect, 2, border_radius=10)
+
+            txt = HEADER_FONT.render(label, True, GOLD if is_hover else WHITE)
+            surface.blit(txt, (WIDTH // 2 - txt.get_width() // 2, btn_rect.y + 8))
+
+        foot = SMALL_FONT.render("Use W / S or ARROWS to Select | ENTER to Confirm | M: Mute Music | N: Mute SFX", True, (130, 150, 190))
+        surface.blit(foot, (WIDTH // 2 - foot.get_width() // 2, HEIGHT - 35))
+
 
 # =====================================================
-# MAIN GAME LOOP
+# HOW TO PLAY / CONTROLS HELP SCREEN
 # =====================================================
 
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
+def draw_help_screen(surface):
+    surface.fill(DARK_BG)
 
-        elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            running = False
+    # Clickable Back Button (Top Left)
+    help_back_btn = pygame.Rect(40, 25, 160, 42)
+    mx, my = pygame.mouse.get_pos()
+    hb_hover = help_back_btn.collidepoint(mx, my)
+    pygame.draw.rect(surface, (45, 60, 100) if hb_hover else (24, 30, 52), help_back_btn, border_radius=10)
+    pygame.draw.rect(surface, GOLD if hb_hover else (80, 105, 150), help_back_btn, 2, border_radius=10)
+    hb_txt = FONT.render("< MENU (ESC)", True, GOLD if hb_hover else WHITE)
+    surface.blit(hb_txt, (help_back_btn.centerx - hb_txt.get_width() // 2, help_back_btn.centery - hb_txt.get_height() // 2))
 
-        if state == "SELECTION":
-            if selection_screen.handle_input(event):
-                p1_elem = selection_screen.elements[selection_screen.p1_idx]
-                p2_elem = selection_screen.elements[selection_screen.p2_idx]
+    title = HUGE_FONT.render("HOW TO PLAY & CONTROLS", True, GOLD)
+    surface.blit(title, (WIDTH // 2 - title.get_width() // 2, 35))
 
-                player1 = Player(200, 400, p1_elem, True)
-                player2 = Player(900, 400, p2_elem, False)
-                state = "BATTLE"
+    p1_card = pygame.Rect(80, 130, 480, 450)
+    p2_card = pygame.Rect(640, 130, 480, 450)
 
-        elif state == "BATTLE":
-            if event.type == pygame.KEYDOWN:
-                if game_over and event.key == pygame.K_r:
-                    state = "SELECTION"
-                    game_over = False
+    # P1 Controls
+    pygame.draw.rect(surface, (20, 26, 48), p1_card, border_radius=14)
+    pygame.draw.rect(surface, (80, 140, 245), p1_card, 3, border_radius=14)
+    p1_lbl = TITLE_FONT.render("PLAYER 1 CONTROLS", True, (120, 190, 255))
+    surface.blit(p1_lbl, (p1_card.x + 30, p1_card.y + 25))
+
+    p1_moves = [
+        ("W / S / A / D", "Move, Jump & Fast-Fall"),
+        ("LEFT SHIFT / SPACE", "Flash Dash (Invulnerable)"),
+        ("TAP F", "Primary Projectile"),
+        ("HOLD & RELEASE F", "Super Charged Beam"),
+        ("G KEY", "Rapid Skill Barrage"),
+        ("E KEY", "Shield (Tap on impact for PERFECT PARRY!)"),
+        ("Q KEY", "OVERDRIVE ULTIMATE (When 100% Burst)"),
+    ]
+    for idx, (k, desc) in enumerate(p1_moves):
+        kt = FONT.render(k, True, GOLD)
+        dt = SMALL_FONT.render(desc, True, WHITE)
+        surface.blit(kt, (p1_card.x + 30, p1_card.y + 90 + idx * 46))
+        surface.blit(dt, (p1_card.x + 30, p1_card.y + 114 + idx * 46))
+
+    # P2 Controls
+    pygame.draw.rect(surface, (20, 26, 48), p2_card, border_radius=14)
+    pygame.draw.rect(surface, (245, 90, 70), p2_card, 3, border_radius=14)
+    p2_lbl = TITLE_FONT.render("PLAYER 2 CONTROLS", True, (255, 140, 120))
+    surface.blit(p2_lbl, (p2_card.x + 30, p2_card.y + 25))
+
+    p2_moves = [
+        ("ARROW KEYS", "Move, Jump & Fast-Fall"),
+        ("RIGHT SHIFT / /", "Flash Dash (Invulnerable)"),
+        ("TAP ENTER", "Primary Projectile"),
+        ("HOLD & RELEASE ENTER", "Super Charged Beam"),
+        ("RSHIFT / \\", "Rapid Skill Barrage"),
+        ("RIGHT CTRL", "Shield (Tap on impact for PERFECT PARRY!)"),
+        ("BACKSPACE / RALT", "OVERDRIVE ULTIMATE (When 100% Burst)"),
+    ]
+    for idx, (k, desc) in enumerate(p2_moves):
+        kt = FONT.render(k, True, GOLD)
+        dt = SMALL_FONT.render(desc, True, WHITE)
+        surface.blit(kt, (p2_card.x + 30, p2_card.y + 90 + idx * 46))
+        surface.blit(dt, (p2_card.x + 30, p2_card.y + 114 + idx * 46))
+
+    back_txt = HEADER_FONT.render("Press ESC or SPACE to Return to Main Menu", True, (210, 230, 255))
+    surface.blit(back_txt, (WIDTH // 2 - back_txt.get_width() // 2, 620))
+
+
+# =====================================================
+# GAME STATE MANAGER & MAIN LOOP
+# =====================================================
+
+def run_game(max_frames=None):
+    global game_state, player1, player2, current_stage, projectiles, beams
+    global particles, shockwaves, ghost_trails, ground_decals, floating_texts
+    global clash_manager, active_ultimate, game_over, winner_text, match_timer
+    global arcade_current_step, shake_timer, hitstop_timer
+
+    game_state = "MENU"
+    menu_screen = MainMenuScreen()
+    selection_screen = SelectionScreen()
+
+    player1 = None
+    player2 = None
+    current_stage = None
+    projectiles = []
+    beams = []
+    particles = []
+    shockwaves = []
+    ghost_trails = []
+    ground_decals = []
+    floating_texts = []
+    clash_manager = BeamClashManager()
+    active_ultimate = None
+
+    game_over = False
+    winner_text = ""
+    match_timer = 99.0
+    arcade_stage_ladder = ['fire', 'water', 'earth', 'lightning']
+    arcade_current_step = 0
+
+    running = True
+    frame_count = 0
+
+    while running:
+        frame_count += 1
+        if max_frames and frame_count > max_frames:
+            break
+
+            # -------------------------------------------------
+            # GLOBAL EVENT HANDLING
+            # -------------------------------------------------
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_m:
+                    AUDIO.toggle_music()
+                elif event.key == pygame.K_n:
+                    AUDIO.toggle_sfx()
+
+            if game_state == "MENU":
+                action = menu_screen.handle_input(event)
+                if action == "VS_CPU":
+                    selection_screen.mode = "VS_CPU"
+                    game_state = "SELECTION"
+                elif action == "VS_P2":
+                    selection_screen.mode = "VS_P2"
+                    game_state = "SELECTION"
+                elif action == "ARCADE_MODE" or action == "VS_CPU_LADDER":
+                    selection_screen.mode = "ARCADE"
+                    arcade_current_step = 0
+                    game_state = "SELECTION"
+                elif action == "TRAINING":
+                    selection_screen.mode = "TRAINING"
+                    game_state = "SELECTION"
+                elif action == "HELP":
+                    game_state = "HELP"
+                elif action == "EXIT":
+                    running = False
+
+            elif game_state == "HELP":
+                help_back_btn = pygame.Rect(40, 25, 160, 42)
+                if event.type == pygame.KEYDOWN and (event.key in (pygame.K_ESCAPE, pygame.K_SPACE, pygame.K_RETURN, pygame.K_b)):
+                    AUDIO.play('move')
+                    game_state = "MENU"
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if help_back_btn.collidepoint(event.pos):
+                        AUDIO.play('move')
+                        game_state = "MENU"
+
+            elif game_state == "SELECTION":
+                sel_action = selection_screen.handle_input(event)
+                if sel_action == "BACK":
+                    game_state = "MENU"
+                elif sel_action == "START":
+                    # Initialize Match
+                    p1_elem = ELEMENT_LIST[selection_screen.p1_idx]
+                    p2_elem = ELEMENT_LIST[selection_screen.p2_idx]
+                    stage_key = selection_screen.stages[selection_screen.stage_idx]
+
+                    is_cpu_match = (selection_screen.mode in ['VS_CPU', 'ARCADE', 'TRAINING'])
+                    diff = selection_screen.ai_difficulty if selection_screen.mode != 'ARCADE' else ['apprentice', 'normal', 'grandmaster', 'grandmaster'][arcade_current_step]
+
+                    player1 = Champion(260, GROUND_Y - 45, p1_elem, is_player_one=True, is_cpu=False)
+                    player2 = Champion(940, GROUND_Y - 45, p2_elem, is_player_one=False, is_cpu=is_cpu_match, cpu_difficulty=diff)
+
+                    current_stage = ArenaStage(stage_key)
                     projectiles.clear()
                     beams.clear()
                     particles.clear()
-                    clash_effects.clear()
+                    shockwaves.clear()
+                    ghost_trails.clear()
+                    ground_decals.clear()
+                    floating_texts.clear()
+                    active_ultimate = None
+                    clash_manager = BeamClashManager()
 
-                elif not game_over:
-                    # P1 Controls
-                    if event.key == pygame.K_e:
-                        player1.trigger_shield()
-                    elif event.key == pygame.K_f:
-                        if player1.stamina >= player1.min_attack_cost:
-                            player1.charging = True
-                            player1.charge_time = 0
-                    elif event.key == pygame.K_g:
-                        player1.trigger_barrage(projectiles)
+                    game_over = False
+                    winner_text = ""
+                    match_timer = 99.0
+                    game_state = "BATTLE"
 
-                    # P2 Controls
-                    elif event.key == pygame.K_RCTRL:
-                        player2.trigger_shield()
-                    elif event.key == pygame.K_RETURN:
-                        if player2.stamina >= player2.min_attack_cost:
-                            player2.charging = True
-                            player2.charge_time = 0
-                    elif event.key == pygame.K_RSHIFT:
-                        player2.trigger_barrage(projectiles)
+            elif game_state == "BATTLE":
+                hud_menu_btn = pygame.Rect(WIDTH // 2 - 48, 64, 96, 22)
+                rematch_btn = pygame.Rect(WIDTH // 2 - 250, HEIGHT // 2 + 95, 230, 48)
+                menu_btn = pygame.Rect(WIDTH // 2 + 20, HEIGHT // 2 + 95, 230, 48)
 
-            elif event.type == pygame.KEYUP and not game_over:
-                if event.key == pygame.K_f and player1.charging:
-                    attack = player1.release_attack()
-                    if isinstance(attack, Beam):
-                        beams.append(attack)
-                    elif isinstance(attack, Projectile):
-                        projectiles.append(attack)
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if hud_menu_btn.collidepoint(event.pos):
+                        AUDIO.play('move')
+                        game_state = "MENU"
+                    elif game_over:
+                        if menu_btn.collidepoint(event.pos):
+                            AUDIO.play('move')
+                            game_state = "MENU"
+                        elif rematch_btn.collidepoint(event.pos):
+                            if selection_screen.mode == 'ARCADE' and player1.hp > 0 and arcade_current_step < len(arcade_stage_ladder) - 1:
+                                arcade_current_step += 1
+                                next_elem = arcade_stage_ladder[arcade_current_step]
+                                player2 = Champion(940, GROUND_Y - 45, next_elem, is_player_one=False, is_cpu=True, cpu_difficulty='grandmaster')
+                                current_stage = ArenaStage(next_elem)
+                                player1.hp = min(player1.max_hp, player1.hp + 60)
+                                game_over = False
+                                match_timer = 99.0
+                            else:
+                                game_state = "SELECTION"
+                                game_over = False
 
-                elif event.key == pygame.K_RETURN and player2.charging:
-                    attack = player2.release_attack()
-                    if isinstance(attack, Beam):
-                        beams.append(attack)
-                    elif isinstance(attack, Projectile):
-                        projectiles.append(attack)
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        AUDIO.play('move')
+                        game_state = "MENU"
 
-    # -------------------------------------------------
-    # SELECTION STATE
-    # -------------------------------------------------
-    if state == "SELECTION":
-        selection_screen.draw(screen)
+                    elif game_over:
+                        if event.key == pygame.K_SPACE or event.key == pygame.K_r:
+                            if selection_screen.mode == 'ARCADE' and player1.hp > 0 and arcade_current_step < len(arcade_stage_ladder) - 1:
+                                # Advance to next arcade stage
+                                arcade_current_step += 1
+                                next_elem = arcade_stage_ladder[arcade_current_step]
+                                player2 = Champion(940, GROUND_Y - 45, next_elem, is_player_one=False, is_cpu=True, cpu_difficulty='grandmaster')
+                                current_stage = ArenaStage(next_elem)
+                                player1.hp = min(player1.max_hp, player1.hp + 60)
+                                game_over = False
+                                match_timer = 99.0
+                            else:
+                                game_state = "SELECTION"
+                                game_over = False
 
-    # -------------------------------------------------
-    # BATTLE STATE
-    # -------------------------------------------------
-    elif state == "BATTLE":
-        if not game_over:
-            if hitstop_timer > 0:
-                # Freeze-frame on a big hit: skip gameplay updates for a
-                # few frames so the impact reads as a punch, not a blip.
-                hitstop_timer -= 1
-            else:
-                keys = pygame.key.get_pressed()
-                player1.move(pygame.K_w, pygame.K_s, pygame.K_a, pygame.K_d, keys)
-                player2.move(pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT, keys)
+                    elif not game_over:
+                        # Player 1 Controls
+                        if event.key == pygame.K_w:
+                            player1.jump()
+                        elif event.key == pygame.K_LSHIFT or event.key == pygame.K_SPACE or event.key == pygame.K_c:
+                            player1.dash(ghost_trails)
+                        elif event.key == pygame.K_e:
+                            player1.trigger_shield()
+                        elif event.key == pygame.K_g:
+                            player1.trigger_barrage()
+                        elif event.key == pygame.K_q:
+                            if player1.burst >= 100.0 and active_ultimate is None:
+                                active_ultimate = player1.trigger_ultimate(player2)
+                        elif event.key == pygame.K_f:
+                            if clash_manager.active:
+                                clash_manager.push(0.08)  # Beam mash push!
+                            else:
+                                player1.charging = True
+                                player1.charge_time = 0
 
-                background_time += 0.02
+                        # Player 2 Controls (when not CPU)
+                        if not player2.is_cpu:
+                            if event.key == pygame.K_UP:
+                                player2.jump()
+                            elif event.key == pygame.K_RSHIFT or event.key == pygame.K_SLASH:
+                                player2.dash(ghost_trails)
+                            elif event.key == pygame.K_RCTRL:
+                                player2.trigger_shield()
+                            elif event.key == pygame.K_BACKSLASH or event.key == pygame.K_PERIOD:
+                                player2.trigger_barrage()
+                            elif event.key == pygame.K_BACKSPACE or event.key == pygame.K_RALT:
+                                if player2.burst >= 100.0 and active_ultimate is None:
+                                    active_ultimate = player2.trigger_ultimate(player1)
+                            elif event.key == pygame.K_RETURN:
+                                if clash_manager.active:
+                                    clash_manager.push(-0.08)  # Beam mash push!
+                                else:
+                                    player2.charging = True
+                                    player2.charge_time = 0
 
-                for p in particles[:]:
-                    p.update()
-                    if p.is_dead():
-                        particles.remove(p)
+                elif event.type == pygame.KEYUP and not game_over:
+                    if event.key == pygame.K_f and player1.charging:
+                        attack = player1.release_attack()
+                        if isinstance(attack, Beam):
+                            beams.append(attack)
+                        elif isinstance(attack, Projectile):
+                            projectiles.append(attack)
 
-                for ce in clash_effects[:]:
-                    ce.update()
-                    if ce.is_dead():
-                        clash_effects.remove(ce)
+                    if not player2.is_cpu and event.key == pygame.K_RETURN and player2.charging:
+                        attack = player2.release_attack()
+                        if isinstance(attack, Beam):
+                            beams.append(attack)
+                        elif isinstance(attack, Projectile):
+                            projectiles.append(attack)
 
-                # Advance every in-flight attack first...
-                for proj in projectiles[:]:
-                    proj.update(particles)
-                    if proj.is_finished():
-                        projectiles.remove(proj)
+        # -------------------------------------------------
+        # MENU & UI UPDATES
+        # -------------------------------------------------
+        if game_state == "MENU":
+            menu_screen.update()
+            menu_screen.draw(screen)
 
-                for beam in beams[:]:
-                    beam.update(particles)
-                    if beam.is_finished():
-                        beams.remove(beam)
+        elif game_state == "HELP":
+            draw_help_screen(screen)
 
-                # ...then let opposing attacks clash before checking whether
-                # anything that's left actually reaches a player. This covers
-                # basic attacks and barrage pellets (mutual cancel-out), a
-                # beam shredding an incoming bolt, and beam-vs-beam struggles.
-                resolve_clashes(projectiles, beams, particles, clash_effects)
+        elif game_state == "SELECTION":
+            selection_screen.draw(screen)
 
-                # Projectiles
-                for proj in projectiles[:]:
-                    target = player2 if proj.owner is player1 else player1
-                    if proj.rect.colliderect(target.rect):
-                        multiplier = get_type_multiplier(proj.element_type, target.element_type)
-                        final_damage = int(proj.damage * multiplier)
-                        target.take_damage(final_damage, proj.direction)
+        # -------------------------------------------------
+        # BATTLE SIMULATION
+        # -------------------------------------------------
+        elif game_state == "BATTLE":
+            if not game_over:
+                if hitstop_timer > 0:
+                    hitstop_timer -= 1
+                else:
+                    match_timer = max(0.0, match_timer - 1.0 / FPS)
 
-                        for _ in range(8):
-                            particles.append(
-                                Particle(
-                                    proj.x, proj.y,
-                                    random.choice(proj.colors),
-                                    random.randint(2, 5), 12,
-                                    random.uniform(-2, 2),
-                                    random.uniform(-2, 2)
-                                )
-                            )
-                        projectiles.remove(proj)
+                    # Continuous Key Movement
+                    keys = pygame.key.get_pressed()
+                    # P1
+                    dx1 = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
+                    if dx1 != 0:
+                        player1.vx += dx1 * 1.6
+                        player1.vx = max(-player1.speed, min(player1.speed, player1.vx))
 
-                # Beams (use the live, clash-clipped reach so a beam locked
-                # in a struggle can't hit a player until it breaks through)
-                for beam in beams:
-                    target = player2 if beam.owner is player1 else player1
-                    if beam.get_live_rect().colliderect(target.rect) and target not in beam.hit_targets:
-                        multiplier = get_type_multiplier(beam.element_type, target.element_type)
-                        final_damage = int(beam.damage * multiplier)
-                        target.take_damage(final_damage, beam.direction)
-                        beam.hit_targets.add(target)
+                    # P2
+                    if not player2.is_cpu:
+                        dx2 = (1 if keys[pygame.K_RIGHT] else 0) - (1 if keys[pygame.K_LEFT] else 0)
+                        if dx2 != 0:
+                            player2.vx += dx2 * 1.6
+                            player2.vx = max(-player2.speed, min(player2.speed, player2.vx))
+                    else:
+                        player2.update_cpu_ai(player1, projectiles, beams, ghost_trails)
 
-                        for _ in range(16):
-                            particles.append(
-                                Particle(
-                                    target.x, target.y,
-                                    random.choice(beam.colors + [WHITE]),
-                                    random.randint(3, 8), 16,
-                                    random.uniform(-4, 4),
-                                    random.uniform(-4, 4)
-                                )
-                            )
+                    current_stage.update()
 
-                player1.update(particles, projectiles)
-                player2.update(particles, projectiles)
+                    # Update entities
+                    player1.update_physics(ghost_trails, particles)
+                    player2.update_physics(ghost_trails, particles)
+                    player1.update_attack_state(projectiles, particles)
+                    player2.update_attack_state(projectiles, particles)
 
-                if player1.hp <= 0:
-                    game_over = True
-                    winner_text = f"Player 2 ({ELEMENT_DATA[player2.element_type]['name']}) Wins!"
-                elif player2.hp <= 0:
-                    game_over = True
-                    winner_text = f"Player 1 ({ELEMENT_DATA[player1.element_type]['name']}) Wins!"
+                    # CPU Ultimate Trigger
+                    if player2.is_cpu and player2.ai_action == 'ultimate' and active_ultimate is None:
+                        active_ultimate = player2.trigger_ultimate(player1)
+                        player2.ai_action = 'idle'
+
+                    # Active Ultimate
+                    if active_ultimate:
+                        active_ultimate.update(particles, shockwaves, ground_decals)
+                        if active_ultimate.is_finished():
+                            active_ultimate = None
+
+                    # Clashing & Beam struggle
+                    if clash_manager.active:
+                        clash_manager.update(particles, shockwaves, floating_texts)
+                        # CPU mash during clash
+                        if player2.is_cpu and random.random() < 0.45:
+                            clash_manager.push(-0.04)
+
+                    for proj in projectiles[:]:
+                        proj.update(particles)
+                        if proj.is_finished():
+                            projectiles.remove(proj)
+
+                    for beam in beams[:]:
+                        beam.update(particles)
+                        if beam.is_finished():
+                            beams.remove(beam)
+
+                    resolve_combat_interactions(projectiles, beams, [player1, player2], particles, shockwaves, floating_texts, clash_manager)
+
+                    for p in particles[:]:
+                        p.update()
+                        if p.is_dead():
+                            particles.remove(p)
+
+                    for s in shockwaves[:]:
+                        s.update()
+                        if s.is_dead():
+                            shockwaves.remove(s)
+
+                    for g in ghost_trails[:]:
+                        g.update()
+                        if g.is_dead():
+                            ghost_trails.remove(g)
+
+                    for d in ground_decals[:]:
+                        d.update()
+                        if d.is_dead():
+                            ground_decals.remove(d)
+
+                    for f in floating_texts[:]:
+                        f.update()
+                        if f.is_dead():
+                            floating_texts.remove(f)
+
+                    # Check KO / Game Over
+                    if player1.hp <= 0 or player2.hp <= 0 or match_timer <= 0:
+                        game_over = True
+                        trigger_shake(4, 6)
+                        trigger_hitstop(10)
+                        AUDIO.play('ko')
+                        if player1.hp > player2.hp:
+                            winner_text = f"PLAYER 1 ({ELEMENT_DATA[player1.element_type]['name']}) VICTORY!"
+                        elif player2.hp > player1.hp:
+                            winner_tag = "CPU" if player2.is_cpu else "PLAYER 2"
+                            winner_text = f"{winner_tag} ({ELEMENT_DATA[player2.element_type]['name']}) VICTORY!"
+                        else:
+                            winner_text = "TIME UP - DRAW MATCH!"
 
             if shake_timer > 0:
                 shake_timer -= 1
 
-        # Drawing Battle (rendered to an offscreen surface so a screen
-        # shake can nudge the whole scene without affecting UI/game logic)
-        draw_background(game_surface, background_time)
+            # -------------------------------------------------
+            # RENDER BATTLE SCENE
+            # -------------------------------------------------
+            current_stage.draw(game_surface)
 
-        for p in particles:
-            p.draw(game_surface)
+            for d in ground_decals:
+                d.draw(game_surface)
 
-        for proj in projectiles:
-            proj.draw(game_surface)
+            for g in ghost_trails:
+                g.draw(game_surface)
 
-        for beam in beams:
-            beam.draw(game_surface)
+            for p in particles:
+                p.draw(game_surface)
 
-        for ce in clash_effects:
-            ce.draw(game_surface)
+            for proj in projectiles:
+                proj.draw(game_surface)
 
-        player1.draw(game_surface, player2)
-        player2.draw(game_surface, player1)
+            for beam in beams:
+                beam.draw(game_surface)
 
-        # Health & Stamina Bars
-        draw_health_and_stamina_bar(game_surface, 60, 45, player1, f"P1: {ELEMENT_DATA[player1.element_type]['name']}")
-        draw_health_and_stamina_bar(game_surface, 660, 45, player2, f"P2: {ELEMENT_DATA[player2.element_type]['name']}")
+            for s in shockwaves:
+                s.draw(game_surface)
 
-        # Move Guides at Bottom
-        p1_move_desc = ELEMENT_DATA[player1.element_type]['p1_controls']
-        p2_move_desc = ELEMENT_DATA[player2.element_type]['p2_controls']
+            player1.draw(game_surface, player2)
+            player2.draw(game_surface, player1)
 
-        p1_hud = SMALL_FONT.render(p1_move_desc, True, ELEMENT_DATA[player1.element_type]['colors'][-1])
-        p2_hud = SMALL_FONT.render(p2_move_desc, True, ELEMENT_DATA[player2.element_type]['colors'][-1])
+            clash_manager.draw(game_surface)
 
-        game_surface.blit(p1_hud, (60, HEIGHT - 30))
-        game_surface.blit(p2_hud, (WIDTH - p2_hud.get_width() - 60, HEIGHT - 30))
+            if active_ultimate:
+                active_ultimate.draw(game_surface)
 
-        if game_over:
-            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((10, 14, 25, 180))
-            game_surface.blit(overlay, (0, 0))
+            for f in floating_texts:
+                f.draw(game_surface)
 
-            win_surf = LARGE_FONT.render(winner_text, True, WHITE)
-            restart_surf = FONT.render("Press 'R' to Select New Elements or ESC to Exit", True, (200, 220, 255))
+            # Draw Sleek Battle HUD
+            draw_battle_hud(game_surface, player1, player2, match_timer, current_stage.name)
 
-            game_surface.blit(win_surf, (WIDTH // 2 - win_surf.get_width() // 2, HEIGHT // 2 - 50))
-            game_surface.blit(restart_surf, (WIDTH // 2 - restart_surf.get_width() // 2, HEIGHT // 2 + 20))
+            # Game Over Victory Screen Overlay
+            if game_over:
+                overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                overlay.fill((8, 12, 24, 210))
+                game_surface.blit(overlay, (0, 0))
 
-        shake_x, shake_y = get_shake_offset()
-        screen.fill(BG)
-        screen.blit(game_surface, (shake_x, shake_y))
+                win_title = HUGE_FONT.render("K. O.", True, CRIT_RED)
+                win_sub = TITLE_FONT.render(winner_text, True, GOLD)
 
-    pygame.display.flip()
-    clock.tick(FPS)
+                is_arcade_advance = (selection_screen.mode == 'ARCADE' and player1.hp > 0 and arcade_current_step < len(arcade_stage_ladder) - 1)
 
-pygame.quit()
-sys.exit()
+                # Match statistics breakdown
+                stats_p1 = SMALL_FONT.render(f"P1: {player1.total_damage_dealt} Dmg Dealt | {player1.parries_landed} Parries", True, (180, 215, 255))
+                stats_p2 = SMALL_FONT.render(f"P2: {player2.total_damage_dealt} Dmg Dealt | {player2.parries_landed} Parries", True, (255, 180, 180))
+
+                game_surface.blit(win_title, (WIDTH // 2 - win_title.get_width() // 2, HEIGHT // 2 - 130))
+                game_surface.blit(win_sub, (WIDTH // 2 - win_sub.get_width() // 2, HEIGHT // 2 - 50))
+                game_surface.blit(stats_p1, (WIDTH // 2 - stats_p1.get_width() // 2, HEIGHT // 2 + 15))
+                game_surface.blit(stats_p2, (WIDTH // 2 - stats_p2.get_width() // 2, HEIGHT // 2 + 40))
+
+                # Interactive Clickable Buttons on Game Over
+                rematch_btn = pygame.Rect(WIDTH // 2 - 245, HEIGHT // 2 + 85, 230, 48)
+                menu_btn = pygame.Rect(WIDTH // 2 + 15, HEIGHT // 2 + 85, 230, 48)
+
+                mx, my = pygame.mouse.get_pos()
+                r_hover = rematch_btn.collidepoint(mx, my)
+                m_hover = menu_btn.collidepoint(mx, my)
+
+                r_col = (45, 175, 85) if r_hover else (30, 130, 65)
+                m_col = (180, 55, 60) if m_hover else (125, 38, 42)
+
+                pygame.draw.rect(game_surface, r_col, rematch_btn, border_radius=12)
+                pygame.draw.rect(game_surface, WHITE if r_hover else (180, 240, 190), rematch_btn, 2, border_radius=12)
+                r_btn_txt = HEADER_FONT.render("NEXT STAGE" if is_arcade_advance else "REMATCH (SPACE)", True, WHITE)
+                game_surface.blit(r_btn_txt, (rematch_btn.centerx - r_btn_txt.get_width() // 2, rematch_btn.centery - r_btn_txt.get_height() // 2))
+
+                pygame.draw.rect(game_surface, m_col, menu_btn, border_radius=12)
+                pygame.draw.rect(game_surface, WHITE if m_hover else (240, 180, 180), menu_btn, 2, border_radius=12)
+                m_btn_txt = HEADER_FONT.render("< MAIN MENU (ESC)", True, WHITE)
+                game_surface.blit(m_btn_txt, (menu_btn.centerx - m_btn_txt.get_width() // 2, menu_btn.centery - m_btn_txt.get_height() // 2))
+
+            # Blit with Screen Shake offset (Steady on Game Over)
+            sx, sy = get_shake_offset()
+            if game_over:
+                sx, sy = 0, 0  # Completely eliminate shake after match is complete!
+            screen.fill(BLACK)
+            screen.blit(game_surface, (sx, sy))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+    pygame.quit()
+
+if __name__ == "__main__":
+    run_game()
